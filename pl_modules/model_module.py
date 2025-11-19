@@ -19,6 +19,7 @@ def get_model(model_args:dict=None):
 class ModelModule(pl.LightningModule):
     def __init__(self, output_dir=None, model_args=None, data_args=None, run_args=None):
         super().__init__()
+        self.strict_loading = False
         self.save_hyperparameters()
         if model_args is None:
             model_args = {}
@@ -39,6 +40,15 @@ class ModelModule(pl.LightningModule):
         self.batch_size = data_args.batch_size
 
         self.train_loss = None
+
+    def load_state_dict(self, state_dict, strict=False):
+        result = super().load_state_dict(state_dict, strict=strict)
+        missing, unexpected = result.missing_keys, result.unexpected_keys
+        if missing:
+            print(f"[ModelModule] Missing keys ({len(missing)}): {', '.join(missing)}")
+        if unexpected:
+            print(f"[ModelModule] Unexpected keys ({len(unexpected)}): {', '.join(unexpected)}")
+        return result
 
     def get_progress_bar_dict(self):
         tqdm_dict = super().get_progress_bar_dict()

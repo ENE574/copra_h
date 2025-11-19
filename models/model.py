@@ -124,6 +124,7 @@ class ESM2RiNALMo(nn.Module):
         self.esm, esm_feat_size = load_esm(esm_type)
         self.rinalmo, rinalmo_feat_size = load_rinalmo(rinalmo_weights, rinalmo_type)
         self.pair_encoder = ResiduePairEncoder(pair_dim, max_num_atoms=4)  # N, CA, C, O,
+        self.pair_dim = pair_dim
         self.c_former = CoFormer(**kwargs['coformer'])
         self.representation_layer = representation_layer
         self.proj = 0
@@ -182,13 +183,12 @@ class ESM2RiNALMo(nn.Module):
             nn.init.normal_(self.prot_embedding)
             nn.init.normal_(self.rna_embedding)
             nn.init.normal_(self.complex_embedding)
-        if pair_dim != self.complex_dim:
-            self.z_proj = nn.Linear(pair_dim, self.complex_dim)
         self.pred_head = nn.Sequential(
             nn.Linear(self.complex_dim, self.feat_size), nn.ReLU(),
             nn.Linear(self.feat_size, self.feat_size), nn.ReLU(),
             nn.Linear(self.feat_size, output_dim)
         )
+        self.fused_pair_proj = nn.Linear(self.complex_dim * 2, pair_dim)
         # For mask distance pretraining
         self.mask_token = nn.Parameter(torch.randn(size=(1, pair_dim)))
         self.dist_head = nn.Sequential(
@@ -291,10 +291,9 @@ class ESM2RiNALMo(nn.Module):
     def forward(self, input, strategy='separate', stage='finetune', need_mask=False):
         out_embedding, z, key_padding_mask = self._forward(input, strategy, need_mask=need_mask)
         if stage == 'finetune':
-                
-            output, z, attn = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False)
+            output = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False)
 
-            complex_embedding = output + self.z_proj(z).sum(-2) * 0.001
+            complex_embedding = output
             if self.pooling == 'token':
                 complex_embedding = output[:, 0, :].squeeze(1)
             else:
@@ -321,7 +320,7 @@ class ESM2RiNALMo(nn.Module):
             # all the ones in transformer mask means ignoring, which is different from the meaning of pos_mask !!!!
             if torch.isnan(z).any():
                 print("Found Nan in z!")
-            output, z, _ = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False, attn_mask=attn_mask)
+            output = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False, attn_mask=attn_mask)
             
             # Output Embedding: [N, E]
             if self.pooling == 'token':
@@ -346,12 +345,14 @@ class ESM2RiNALMo(nn.Module):
                 print("Found Nan in z!")
             # ------------------------------------- Atom-level distance precdiction -------------------------------------------
             
-            output, z, _ = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False, attn_mask=None)
+            output_dist = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False, attn_mask=None)
 
-            if torch.isnan(z).any():
-                print("Found Nan in z!")
-
-            dist_logits = self.dist_head(z)
+            pair_len = output_dist.shape[1]
+            token_i = output_dist.unsqueeze(2).expand(-1, -1, pair_len, -1)
+            token_j = output_dist.unsqueeze(1).expand(-1, pair_len, -1, -1)
+            fused_pair = torch.cat([token_i, token_j], dim=-1)
+            fused_pair = self.fused_pair_proj(fused_pair)
+            dist_logits = self.dist_head(fused_pair)
             dist_logits = dist_logits[:, 3:, 3:, :]
             # dist_prob = F.softmax(dist_logits, dim=-1)
             return dist_logits, similarity 
@@ -369,16 +370,16 @@ class ESM2RiNALMo(nn.Module):
                 z_inv = z_mut - z
                 
                 
-                output_forward, z_forward, attn = self.c_former(out_forward, z_forward, key_padding_mask=key_padding_mask, need_attn_weights=False)
-                complex_embedding = output_forward + self.z_proj(z_forward).sum(-2) * 0.001
+                output_forward = self.c_former(out_forward, z_forward, key_padding_mask=key_padding_mask, need_attn_weights=False)
+                complex_embedding = output_forward
                 # Default to be token embeding
                 complex_embedding = complex_embedding[:, 0, :].squeeze(1)
                 
                 output_forward = self.pred_head(complex_embedding)
                 output_forward = output_forward.squeeze(1)
                 
-                output_inv, z_inv, attn = self.c_former(out_inv, z_inv, key_padding_mask=key_padding_mask, need_attn_weights=False)
-                complex_embedding_inv = output_inv + self.z_proj(z_inv).sum(-2) * 0.001
+                output_inv = self.c_former(out_inv, z_inv, key_padding_mask=key_padding_mask, need_attn_weights=False)
+                complex_embedding_inv = output_inv
                 # Default to be token embeding
                 complex_embedding_inv = complex_embedding_inv[:, 0, :].squeeze(1)
                 
@@ -387,12 +388,12 @@ class ESM2RiNALMo(nn.Module):
                 
                 return output_forward, output_inv
             else:
-                output_wild, z_wild, attn = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False)
-                output_mut, z_mut, attn = self.c_former(out_mut, z_mut, key_padding_mask=key_padding_mask, need_attn_weights=False)
-                wild_embedding = output_wild + self.z_proj(z_wild).sum(-2) * 0.001
+                output_wild = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False)
+                output_mut = self.c_former(out_mut, z_mut, key_padding_mask=key_padding_mask, need_attn_weights=False)
+                wild_embedding = output_wild
                 # Default to be token embeding
                 wild_embedding = wild_embedding[:, 0, :].squeeze(1)
-                mut_embedding = output_mut + self.z_proj(z_mut).sum(-2) * 0.001
+                mut_embedding = output_mut
                 mut_embedding = mut_embedding[:, 0, :].squeeze(1)
                 
                 

@@ -1,12 +1,10 @@
+import math
+
 import torch
 from torch import nn
 from torch.nn import functional as F
-from models.components.attention import MultiHeadSelfAttention, FlashMultiHeadSelfAttention
-
 
 from models.components.rope import RotaryPositionEmbedding
-
-import torch.utils.checkpoint as checkpoint
 
 class SwiGLU(nn.Module):
     """
@@ -38,85 +36,174 @@ class SwiGLU(nn.Module):
 class CoFormer(nn.Module):
     def __init__(self, embed_dim, pair_dim, num_blocks, num_heads, use_rot_emb=True, attn_qkv_bias=False, transition_dropout=0.0, attention_dropout=0.0, residual_dropout=0.0, transition_factor=4, use_flash_attn=False):
         super().__init__()
-
+        self.embed_dim = embed_dim
+        self.pair_dim = pair_dim
+        self.num_heads = num_heads
+        self.use_rot_emb = use_rot_emb
         self.use_flash_attn = use_flash_attn
+        self.struct_proj = nn.Linear(pair_dim * 2, embed_dim)
 
         self.blocks = nn.ModuleList(
             [
-                TransformerBlock(embed_dim, pair_dim, num_heads, use_rot_emb, attn_qkv_bias, transition_dropout, attention_dropout, residual_dropout, transition_factor, use_flash_attn) for _ in range(num_blocks)
+                SequenceStructureFusionBlock(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    use_rot_emb=use_rot_emb,
+                    attn_qkv_bias=attn_qkv_bias,
+                    transition_dropout=transition_dropout,
+                    attention_dropout=attention_dropout,
+                    residual_dropout=residual_dropout,
+                    transition_factor=transition_factor,
+                )
+                for _ in range(num_blocks)
             ]
         )
 
         self.final_layer_norm = nn.LayerNorm(embed_dim)
-        self.pair_final_layer_norm = nn.LayerNorm(pair_dim)
 
     def forward(self, x, struct_embed, key_padding_mask=None, need_attn_weights=False, attn_mask=None):
-        attn_weights = None
-        if need_attn_weights:
-            attn_weights = []
-
+        # Structure pooling: reduce 2D pairwise features to a per-token 1D representation.
+        struct_pool = self._pool_structure(struct_embed, key_padding_mask)
+        seq = x
         for block in self.blocks:
-        #     x, struct_embed, attn = checkpoint.checkpoint(
-        #         block, 
-        #         x,
-        #         struct_embed,
-        #         key_padding_mask,
-        #         need_attn_weights,
-        #         use_reentrant=False
-        #         )
-            x, struct_embed, attn = block(x, struct_embed, key_padding_mask, attn_mask)
-            if need_attn_weights:
-                attn_weights.append(attn)
+            seq = block(seq, struct_pool, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
 
-        x = self.final_layer_norm(x)
-        struct_embed = self.pair_final_layer_norm(struct_embed)
-        return x, struct_embed, attn_weights
+        F_out = self.final_layer_norm(seq)
+        return F_out
 
-class TransformerBlock(nn.Module):
-    def __init__(self, embed_dim, pair_dim, num_heads, use_rot_emb=True, attn_qkv_bias=False, transition_dropout=0.0, attention_dropout=0.0, residual_dropout=0.0, transition_factor=4, use_flash_attn=False):
-        super().__init__()
-        
-        self.use_flash_attn = use_flash_attn
-
-        if use_flash_attn:
-            self.mh_attn = FlashMultiHeadSelfAttention(embed_dim, num_heads, attention_dropout, causal=False, use_rot_emb=use_rot_emb, bias=attn_qkv_bias)
+    def _pool_structure(self, struct_embed, key_padding_mask=None):
+        if key_padding_mask is None:
+            row_pool = struct_embed.mean(dim=2)
+            col_pool = struct_embed.mean(dim=1)
         else:
-            self.mh_attn = MultiHeadSelfAttention(embed_dim, pair_dim, num_heads, attention_dropout, use_rot_emb, attn_qkv_bias)
-        
-        self.attn_layer_norm = nn.LayerNorm(embed_dim)
+            valid = (~key_padding_mask).float()
+            col_mask = valid.unsqueeze(1).unsqueeze(-1)
+            row_mask = valid.unsqueeze(2).unsqueeze(-1)
+            row_sum = (struct_embed * col_mask).sum(dim=2)
+            col_sum = (struct_embed * row_mask).sum(dim=1)
+            col_count = col_mask.sum(dim=2).clamp_min(1.0)
+            row_count = row_mask.sum(dim=1).clamp_min(1.0)
+            row_pool = row_sum / col_count
+            col_pool = col_sum / row_count
+            row_pool = row_pool * valid.unsqueeze(-1)
+            col_pool = col_pool * valid.unsqueeze(-1)
+
+        struct_pool = torch.cat([row_pool, col_pool], dim=-1)
+        struct_pool = self.struct_proj(struct_pool)
+        return struct_pool
+
+
+class SequenceStructureFusionBlock(nn.Module):
+    def __init__(self, embed_dim, num_heads, use_rot_emb=True, attn_qkv_bias=False, transition_dropout=0.0, attention_dropout=0.0, residual_dropout=0.0, transition_factor=4):
+        super().__init__()
+        assert embed_dim % num_heads == 0, "Embedding dimensionality must be divisible by the number of attention heads."
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.scale = 1.0 / math.sqrt(self.head_dim)
+        self.use_rot_emb = use_rot_emb
+
+        if use_rot_emb:
+            self.rotary_emb = RotaryPositionEmbedding(self.head_dim)
+
+        self.seq_norm = nn.LayerNorm(embed_dim)
+        self.struct_norm = nn.LayerNorm(embed_dim)
+
+        self.seq_q_proj = nn.Linear(embed_dim, embed_dim, bias=attn_qkv_bias)
+        self.struct_k_proj = nn.Linear(embed_dim, embed_dim, bias=attn_qkv_bias)
+        self.struct_v_proj = nn.Linear(embed_dim, embed_dim, bias=attn_qkv_bias)
+
+        self.struct_q_proj = nn.Linear(embed_dim, embed_dim, bias=attn_qkv_bias)
+        self.seq_k_proj = nn.Linear(embed_dim, embed_dim, bias=attn_qkv_bias)
+        self.seq_v_proj = nn.Linear(embed_dim, embed_dim, bias=attn_qkv_bias)
+
+        self.attn_dropout = nn.Dropout(p=attention_dropout)
+        self.residual_dropout = nn.Dropout(p=residual_dropout)
 
         self.transition = nn.Sequential(
-                SwiGLU(embed_dim, int(2 / 3 * transition_factor * embed_dim), beta_is_learnable=True, bias=True),
-                nn.Dropout(p=transition_dropout),
-                nn.Linear(int(2 / 3 * transition_factor * embed_dim), embed_dim, bias=True),
+            SwiGLU(embed_dim, int(2 / 3 * transition_factor * embed_dim), beta_is_learnable=True, bias=True),
+            nn.Dropout(p=transition_dropout),
+            nn.Linear(int(2 / 3 * transition_factor * embed_dim), embed_dim, bias=True),
         )
-        
-        
-        # self.transition_struct = nn.Sequential(
-        #         SwiGLU(embed_dim, int(2 / 3 * transition_factor * embed_dim), beta_is_learnable=True, bias=True),
-        #         nn.Dropout(p=transition_dropout),
-        #         nn.Linear(int(2 / 3 * transition_factor * embed_dim), embed_dim, bias=True),
-        # )
-        
-        self.out_layer_norm = nn.LayerNorm(embed_dim)
-        self.pair_layer_norm = nn.LayerNorm(pair_dim)
-        
-        self.residual_dropout_1 = nn.Dropout(p=residual_dropout)
-        self.residual_dropout_2 = nn.Dropout(p=residual_dropout)
 
-    def forward(self, x, struct_embed, key_padding_mask=None, attn_mask=None):
-        x = self.attn_layer_norm(x)
-        # if self.use_flash_attn:
-        #     mh_out, attn = self.mh_attn(x, key_padding_mask=key_padding_mask, return_attn_probs=need_attn_weights)
-        # else:
-        # Temporarily unable flash_attn
-        mh_out, struct_out, attn = self.mh_attn(x, struct_embed, attn_mask, key_pad_mask=key_padding_mask)
-        x = x + self.residual_dropout_1(mh_out)
-        struct_embed = struct_embed + self.residual_dropout_1(struct_out)
-        residual = x
-        struct_residual = struct_embed
-        x = self.out_layer_norm(x)
-        struct_embed = self.pair_layer_norm(struct_embed)
-        x = residual + self.residual_dropout_2(self.transition(x))
-        struct_embed = struct_residual + self.residual_dropout_2(struct_embed)
-        return x, struct_embed, attn
+        self.fuse_layer_norm = nn.LayerNorm(embed_dim)
+        self.output_layer_norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, seq_embed, struct_pool, key_padding_mask=None, attn_mask=None):
+        seq_norm = self.seq_norm(seq_embed)
+        struct_norm = self.struct_norm(struct_pool)
+
+        # Bidirectional attention: sequence queries structure features and vice versa.
+        seq_queries = self.seq_q_proj(seq_norm)
+        struct_keys = self.struct_k_proj(struct_norm)
+        struct_values = self.struct_v_proj(struct_norm)
+        seq_to_struct_attn = self._scaled_attention(
+            seq_queries,
+            struct_keys,
+            struct_values,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+        )
+
+        struct_queries = self.struct_q_proj(struct_norm)
+        seq_keys = self.seq_k_proj(seq_norm)
+        seq_values = self.seq_v_proj(seq_norm)
+        struct_to_seq_attn = self._scaled_attention(
+            struct_queries,
+            seq_keys,
+            seq_values,
+            attn_mask=self._transpose_mask(attn_mask),
+            key_padding_mask=key_padding_mask,
+        )
+
+        # Feature fusion: combine original sequence with both attentional updates.
+        fused = seq_embed + self.residual_dropout(seq_to_struct_attn) + self.residual_dropout(struct_to_seq_attn)
+        fused_norm = self.fuse_layer_norm(fused)
+        fused = fused + self.residual_dropout(self.transition(fused_norm))
+        fused = self.output_layer_norm(fused)
+
+        if key_padding_mask is not None:
+            fused = fused.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
+        return fused
+
+    def _scaled_attention(self, q, k, v, attn_mask=None, key_padding_mask=None):
+        bsz, q_len, _ = q.size()
+        q = self._prepare_heads(q)
+        k = self._prepare_heads(k)
+        v = self._prepare_heads(v)
+
+        if self.use_rot_emb:
+            q, k = self.rotary_emb(q, k)
+
+        attn = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+
+        if attn_mask is not None:
+            if attn_mask.dim() == 3:
+                expanded_mask = attn_mask.unsqueeze(1)
+            else:
+                expanded_mask = attn_mask
+            attn = attn.masked_fill(expanded_mask, float("-inf"))
+
+        if key_padding_mask is not None:
+            key_mask = key_padding_mask.unsqueeze(1).unsqueeze(2)
+            attn = attn.masked_fill(key_mask, float("-inf"))
+
+        attn = F.softmax(attn, dim=-1)
+        attn = self.attn_dropout(attn)
+
+        output = torch.matmul(attn, v)
+        output = output.transpose(1, 2).contiguous().view(bsz, q_len, self.embed_dim)
+
+        if key_padding_mask is not None:
+            output = output.masked_fill(key_padding_mask.unsqueeze(-1), 0.0)
+        return output
+
+    def _prepare_heads(self, tensor):
+        bsz, seq_len, _ = tensor.size()
+        tensor = tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        return tensor
+
+    def _transpose_mask(self, attn_mask):
+        if attn_mask is None:
+            return None
+        return attn_mask.transpose(-1, -2)

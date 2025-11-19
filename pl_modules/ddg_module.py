@@ -47,6 +47,15 @@ class DDGModule(pl.LightningModule):
         print("Initializing DDG Module!")
         # self.configure_optimizers()
 
+    def load_state_dict(self, state_dict, strict=False):
+        result = super().load_state_dict(state_dict, strict=strict)
+        missing, unexpected = result.missing_keys, result.unexpected_keys
+        if missing:
+            print(f"[DDGModule] Missing keys ({len(missing)}): {', '.join(missing)}")
+        if unexpected:
+            print(f"[DDGModule] Unexpected keys ({len(unexpected)}): {', '.join(unexpected)}")
+        return result
+
     def get_progress_bar_dict(self):
         tqdm_dict = super().get_progress_bar_dict()
         tqdm_dict.pop('v_num', None)

@@ -30,7 +30,12 @@ def parse_yaml(yaml_dir):
     return config_dict
 def init_pytorch_settings():
     # Multiprocess Setting to speedup dataloader
-    torch.multiprocessing.set_start_method('forkserver')
+    # 使用 spawn 而不是 forkserver，更稳定且内存占用更小
+    try:
+        torch.multiprocessing.set_start_method('spawn', force=True)
+    except RuntimeError:
+        # 如果已经设置过，使用当前方法
+        pass
     torch.multiprocessing.set_sharing_strategy('file_system')
     # torch.set_float32_matmul_precision('high')
     torch.set_num_threads(4)
@@ -71,20 +76,31 @@ class LightningRunner(object):
         print("Dataset args:", self.dataset_args, "\n")
         output_dir, gpus = (self.run_args.output_dir, self.run_args.gpus)
         self.model_args.model.stage = stage
+        
+        # 为输出目录添加时间戳
+        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
+        base_output_dir = Path(output_dir)
+        # 如果配置中有 run_name，将其加入路径；否则只使用时间戳
+        if hasattr(self.run_args, 'run_name') and self.run_args.run_name:
+            output_dir = base_output_dir / f"{self.run_args.run_name}_{timestamp}"
+        else:
+            output_dir = base_output_dir / timestamp
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Output directory: {output_dir}")
+        
         # Setup datamodule
         run_results = []
+        name = (self.run_args.run_name if hasattr(self.run_args, 'run_name') and self.run_args.run_name else 'run') + f"_{timestamp}"
         for k in range(self.run_args.num_folds):
             # if k != 4:
             #     continue
             print(f"Training fold {k} Started!")
-            output_dir = Path(output_dir)
             log_dir = output_dir / f'log_fold_{k}'
             data_module = DataModule(dataset_args=self.dataset_args, **self.dataset_args, col_group=f'fold_{k}')
 
             # Setup model module
             model = self.select_module(stage, log_dir)
             # Trainer setting
-            name = self.run_args.run_name + time.strftime("%Y-%m-%d-%H-%M-%S")
             if self.run_args.wandb:
                 wandb.init(project='copra', name=name)
                 logger = WandbLogger()

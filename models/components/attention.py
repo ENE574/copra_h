@@ -52,7 +52,17 @@ class MultiHeadAttention(nn.Module):
         if self.use_rot_emb:
             self.rotary_emb = RotaryPositionEmbedding(self.c_head)
         
+        # 结构偏置：将 pairwise 结构特征映射到每个 head 的 bias
         self.struct_bias = nn.Linear(pair_dim, self.num_heads, bias=bias)
+        # 结构条件化 gate（路线 1）：g_ij(h) = σ(MLP(Z_ij))
+        # 表达“这个 pair-wise 结构，在 head h 下是否可靠？”
+        self.struct_gate = nn.Linear(pair_dim, self.num_heads, bias=True)
+
+        # head-level aggregation gate（路线 3）：
+        # α(h) = Softmax(MLP(C_s))，其中 C_s 是 complex 级别表示（这里用序列均值）
+        # 表达“在这个 complex 中，哪个 binding mode/head 更重要？”
+        self.head_gate = nn.Linear(self.c_in, self.num_heads, bias=True)
+
         self.outer_linear = nn.Linear(c_squeeze * c_squeeze, pair_dim)
         self.outer_squeeze = nn.Linear(self.c_in, c_squeeze)
         self.to_q = nn.Linear(self.c_in, self.c_qkv, bias=bias)
@@ -61,23 +71,59 @@ class MultiHeadAttention(nn.Module):
 
         self.attention_dropout = nn.Dropout(p=attention_dropout)
 
+        # 简单 logging hook 标志：外部若将其置为 True，则在 forward 中打印 gate 统计信息
+        self.log_gate = False
+
         self.out_proj = nn.Linear(c_in, c_in, bias=bias)
         self.struct_out_proj = nn.Linear(pair_dim, pair_dim, bias=bias)
 
     def forward(self, q, k, v, struct_embed, attn_mask=None, key_pad_mask=None):
         bs = q.shape[0]
+        # 保存原始输入，用于构造 complex-level 表示 C_s
+        q_residual = q  # [B, L, C]
+        # complex-level 语义 C_s：对序列做 mean pooling（忽略 padding）
+        # 这里不显式用 mask，简单平均即可；更精细可以后续再加 mask
+        complex_feat = q_residual.mean(dim=1)  # [B, C_in]
+        head_logits = self.head_gate(complex_feat)         # [B, H]
+        head_alpha = torch.softmax(head_logits, dim=-1)    # [B, H]
 
         q = self.to_q(q).view(bs, -1, self.num_heads, self.c_head).transpose(-2, -3)
         k = self.to_k(k).view(bs, -1, self.num_heads, self.c_head).transpose(-2, -3)
         v = self.to_v(v).view(bs, -1, self.num_heads, self.c_head).transpose(-2, -3)
         
-        struct_attr = self.struct_bias(struct_embed).permute(0, 3, 1, 2) # (N, H, L, L)
-        # print("Shape of Structure attribute:", struct_attr.shape)
+        # 结构偏置 + 结构条件化 gate：先得到每个 pair 的基础 bias，再用 g_ij(h) 调制其可靠性
+        struct_attr = self.struct_bias(struct_embed).permute(0, 3, 1, 2)  # (B, H, L, L)
+        struct_gate = torch.sigmoid(self.struct_gate(struct_embed))       # (B, L, L, H)
+        struct_gate = struct_gate.permute(0, 3, 1, 2)                     # (B, H, L, L)
+        struct_attr = struct_attr * struct_gate
+
         if self.use_rot_emb:
             q, k = self.rotary_emb(q, k)
 
         output, attn = dot_product_attention(q, k, v, struct_attr, attn_mask, key_pad_mask, self.attention_dropout)
 
+        # head-level aggregation gate：根据 C_s 为每个 head 分配权重 α(h)
+        # output: [B, H, L, Dh]
+        head_alpha = head_alpha.unsqueeze(-1).unsqueeze(-1)  # [B, H, 1, 1]
+        output = output * head_alpha
+
+        # ----- 简单 logging hook：记录并按需打印 gate 统计 -----
+        # 存一份最近一次前向的 head_alpha / struct_gate 的均值，方便上层访问或调试
+        with torch.no_grad():
+            # per-head 平均 α(h)
+            self.last_head_alpha = head_alpha.mean(dim=(0, 2, 3)).detach().cpu()  # [H]
+            # per-head 平均 g_ij(h)
+            self.last_struct_gate = struct_gate.mean(dim=(0, 2, 3)).detach().cpu()  # [H]
+
+        if self.log_gate and self.training:
+            # 只打印少量 batch，避免刷屏
+            if torch.rand(1).item() < 0.01:
+                alpha_mean = self.last_head_alpha.numpy()
+                struct_mean = self.last_struct_gate.numpy()
+                print("[GateDebug] head_alpha mean per head:", alpha_mean.round(3))
+                print("[GateDebug] struct_gate mean per head:", struct_mean.round(3))
+
+        # [B, H, L, Dh] -> [B, L, H*Dh]
         output = output.transpose(-2, -3).contiguous().view(bs, -1, self.num_heads * self.c_head)
         
         a = self.outer_squeeze(output)

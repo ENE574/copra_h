@@ -47,6 +47,16 @@ class CoFormer(nn.Module):
             ]
         )
 
+        # 默认开启注意力门控的 logging hook，便于分析 head-level / pair-level gate 行为
+        # 外部若想关闭，可手动将 block.mh_attn.mh_attn.log_gate 设为 False
+        for block in self.blocks:
+            # use_flash_attn=False 时，mh_attn 为 MultiHeadSelfAttention，内部有 mh_attn 属性
+            if hasattr(block, "mh_attn") and hasattr(block.mh_attn, "mh_attn"):
+                try:
+                    block.mh_attn.mh_attn.log_gate = True
+                except AttributeError:
+                    pass
+
         self.final_layer_norm = nn.LayerNorm(embed_dim)
         self.pair_final_layer_norm = nn.LayerNorm(pair_dim)
 

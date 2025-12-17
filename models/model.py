@@ -401,8 +401,8 @@ class ESM2RiNALMo(nn.Module):
                 
                 output_forward = self.pred_head(forward_embedding).squeeze(1)
                 output_inv = self.pred_head(inv_embedding).squeeze(1)
-                
-                return output_forward, output_inv
+
+            return output_forward, output_inv
 
         else:
             raise NotImplementedError

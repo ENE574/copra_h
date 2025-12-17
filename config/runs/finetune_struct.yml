@@ -1,11 +1,11 @@
-epochs: 140
-patience: 150
-output_dir: './outputs/esm2rinalmo_650M/scratch/PRA310'
+epochs: 80          # 最大训练轮次（启用早停后通常用不到这么多）
+patience: 10        # val_loss 连续 10 次没有提升则提前停止
+output_dir: './outputs/scratch/PRA310'
 gpus:
-  - 7
+  - 0
 
 ckpt: null
 
-run_name: 'esm2rinalmo_scratch_patch256'
+run_name: 'finetune_310'
 wandb: False
 num_folds: 5

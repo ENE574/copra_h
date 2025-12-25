@@ -1,8 +1,21 @@
 resume: null
-model: 
+model:
   model_type: copra
   esm_type: 650M
   embedding_root: './outputs/feature_extraction'
+  embedding_dims:
+    esm2: 1280
+    prott5: 1024
+    saprot: 1280
+    rinalmo: 1280
+    rna_msm: 768
+    rna_fm: 640
+    esm_if1: 512
+    protrek: 1024
+    proteinmpnn: 128
+    rna_ernie: 768
+    rnabert: 120
+    rhofold: 384
   seq_prot_models:
     - esm2
     - prott5
@@ -28,7 +41,7 @@ model:
   pair_dim: 40
   dist_dim: 40
   representation_layer: 33
-  coformer: 
+  coformer:
     embed_dim: 320
     pair_dim: 40
     num_blocks: 6

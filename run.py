@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 os.environ["NUMEXPR_MAX_THREADS"] = '56'
 os.environ["MKL_NUM_THREADS"] = '4'
 os.environ["OMP_NUM_THREADS"] = '4'
@@ -19,6 +20,7 @@ from pytorch_lightning.callbacks import TQDMProgressBar, EarlyStopping, ModelChe
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pl_modules import ModelModule, DataModule, PretuneModule, DDGModule
 from collections import defaultdict
+import subprocess
 
 torch.set_num_threads(16)
 
@@ -58,6 +60,17 @@ class LightningRunner(object):
             best_model = module.model
             (output_dir / 'model_data.json').write_text(json.dumps(vars(self.dataset_args), indent=2))
             torch.save(best_model, str(output_dir / 'model.pt'))
+
+    def run_feature_extraction(self):
+        if not getattr(self.run_args, 'feature_extract', False):
+            return
+        cfg_path = getattr(self.run_args, 'feature_extract_config', None)
+        if not cfg_path:
+            raise ValueError("feature_extract is enabled but feature_extract_config is not set.")
+        cfg_path = Path(cfg_path).resolve()
+        cmd = [sys.executable, str(Path(__file__).parent / "extract_features.py"), "--config", str(cfg_path)]
+        print(f"Running feature extraction: {' '.join(cmd)}")
+        subprocess.run(cmd, check=True)
     
     def select_module(self, stage, log_dir):
         if stage=='pretune':
@@ -76,6 +89,9 @@ class LightningRunner(object):
         print("Dataset args:", self.dataset_args, "\n")
         output_dir, gpus = (self.run_args.output_dir, self.run_args.gpus)
         self.model_args.model.stage = stage
+
+        if int(os.environ.get("LOCAL_RANK", "0")) == 0:
+            self.run_feature_extraction()
         
         # 为输出目录添加时间戳
         timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")

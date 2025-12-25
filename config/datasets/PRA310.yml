@@ -12,6 +12,25 @@ pin_memory: False  # 禁用pin_memory以降低内存占用
 cache_dir: './cache/pra310'
 loss_type: regression
 strategy: separate
+use_precomputed_embeddings: true
+embedding_root: './outputs/feature_extraction'
+seq_prot_models:
+  - 'esm2'
+  - 'prott5'
+  - 'saprot'
+seq_rna_models:
+  - 'rinalmo'
+  - 'rna_msm'
+  - 'rna_fm'
+str_prot_models:
+  - 'esm_if1'
+  - 'protrek'
+  - 'proteinmpnn'
+str_rna_models:
+  - 'rna_ernie'
+  - 'rnabert'
+  - 'rhofold'
+embedding_strict: true
 
 transform:
   - type: select_atom

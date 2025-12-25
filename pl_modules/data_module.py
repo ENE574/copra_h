@@ -1,5 +1,6 @@
 from data.sequence_dataset import CustomSeqCollate
 from data.structure_dataset import CustomStructCollate
+from data.structure_dataset_online_mem import CustomStructCollateOnlineMem
 from data.pri30k_dataset import PRI30kStructCollate
 from data import DataRegister
 import pytorch_lightning as pl
@@ -16,6 +17,8 @@ def get_dataset(data_args:dict=None):
 def get_collate(dataset_type):
     collate_dict = {'sequence_dataset': CustomSeqCollate,
                     'structure_dataset': CustomStructCollate,
+                    'structure_dataset_online': CustomStructCollate,
+                    'structure_dataset_online_mem': CustomStructCollateOnlineMem,
                     'pri30k_dataset': PRI30kStructCollate,
                     }
     return collate_dict[dataset_type]
@@ -131,4 +134,3 @@ class DataModule(pl.LightningDataModule):
                 pin_memory=self.pin_memory,
                 persistent_workers=self.num_workers > 0,
             )
-

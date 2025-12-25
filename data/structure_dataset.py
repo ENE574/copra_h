@@ -16,6 +16,7 @@ from typing import Optional, Dict
 from easydict import EasyDict
 from data.protein.residue_constants import restype_order, restype_num
 from data.rna.base_constants import RNA_NUCLEOTIDES
+from pathlib import Path
 
 na_alphabet_config = {
     "standard_tkns": RNA_TOKENS,
@@ -47,6 +48,11 @@ def _process_structure(structure_path, structure_id, valid_prot_chains=None, val
     return data
 
 
+def safe_name(name: str) -> str:
+    name = name.strip().replace(" ", "_")
+    return "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in name)
+
+
 @R.register('structure_dataset')
 class StructureDataset(Dataset):
     ''' 
@@ -65,6 +71,15 @@ class StructureDataset(Dataset):
                  transform=None,
                  mut=False,
                  col_mut='Mutation sequences',
+                 use_precomputed_embeddings: bool = False,
+                 embedding_root: str = "outputs/feature_extraction",
+                 seq_prot_models: Optional[list] = None,
+                 seq_rna_models: Optional[list] = None,
+                 str_prot_models: Optional[list] = None,
+                 str_rna_models: Optional[list] = None,
+                 protein_embedding_model: str = "esm2",
+                 rna_embedding_model: str = "rinalmo",
+                 embedding_strict: bool = True,
                  **kwargs
                  ):
         self.data_root = data_root
@@ -81,6 +96,22 @@ class StructureDataset(Dataset):
         self.na_alphabet = Alphabet(**na_alphabet_config)
         self.mut = mut
         self.col_mut = col_mut
+        def _ensure_list(value, fallback):
+            if value is None:
+                return list(fallback)
+            if isinstance(value, str):
+                return [value]
+            return list(value)
+
+        self.use_precomputed_embeddings = use_precomputed_embeddings
+        self.embedding_root = embedding_root
+        self.protein_embedding_model = protein_embedding_model
+        self.rna_embedding_model = rna_embedding_model
+        self.seq_prot_models = _ensure_list(seq_prot_models, [protein_embedding_model])
+        self.seq_rna_models = _ensure_list(seq_rna_models, [rna_embedding_model])
+        self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1", "protrek", "proteinmpnn"])
+        self.str_rna_models = _ensure_list(str_rna_models, ["rna_ernie", "rnabert", "rhofold"])
+        self.embedding_strict = embedding_strict
         
         self.transform = get_transform(transform)
         
@@ -94,9 +125,8 @@ class StructureDataset(Dataset):
             if self.mut:
                 structure_id += '_' + row['MUTATION']
             if self.diskcache is None or structure_id not in self.diskcache:
-                prot_chains = row[self.col_prot_chain].split(',')
- 
-                na_chains = row[self.col_na_chain].split(',')
+                prot_chains = [c.strip() for c in row[self.col_prot_chain].split(',')]
+                na_chains = [c.strip() for c in row[self.col_na_chain].split(',')]
                 if self.mut:
                     pdb_path = os.path.join(self.data_root, structure_id.split('_')[0]+'.pdb')
                 else:
@@ -168,6 +198,16 @@ class StructureDataset(Dataset):
                         'max_prot_length': max_prot_length,
                         'max_na_length': max_na_length
                     }
+                item['prot_chain_ids'] = prot_chains
+                item['rna_chain_ids'] = na_chains
+                if self.use_precomputed_embeddings:
+                    item['use_precomputed_embeddings'] = True
+                    item['embedding_root'] = str(self.embedding_root)
+                    item['seq_prot_models'] = list(self.seq_prot_models)
+                    item['seq_rna_models'] = list(self.seq_rna_models)
+                    item['str_prot_models'] = list(self.str_prot_models)
+                    item['str_rna_models'] = list(self.str_rna_models)
+                    item['embedding_strict'] = self.embedding_strict
                     
                 cplx.update(item)
                 # print("Complex {} is:".format(i), cplx)
@@ -229,6 +269,14 @@ class CustomStructCollate(object):
         ], dim=0)
 
     @staticmethod
+    def _pad_embedding(token_embeddings, seq_len, max_len):
+        dim = token_embeddings.shape[-1]
+        padded = torch.zeros([max_len, dim], dtype=token_embeddings.dtype)
+        take = min(seq_len, token_embeddings.shape[0])
+        padded[1:1 + take] = token_embeddings[:take]
+        return padded
+
+    @staticmethod
     def _get_common_keys(list_of_dict):
         keys = set(list_of_dict[0].keys())
         for d in list_of_dict[1:]:
@@ -276,6 +324,33 @@ class CustomStructCollate(object):
         mut_flag = 0
         prot_chains = [len(item['prot_seqs']) for item in batch]
         na_chains = [len(item['rna_seqs']) for item in batch]
+        use_precomputed = bool(batch[0].get("use_precomputed_embeddings", False))
+        if use_precomputed:
+            emb_root = Path(batch[0].get("embedding_root", "outputs/feature_extraction"))
+            seq_prot_models = list(batch[0].get("seq_prot_models", ["esm2"]))
+            seq_rna_models = list(batch[0].get("seq_rna_models", ["rinalmo"]))
+            str_prot_models = list(batch[0].get("str_prot_models", ["esm_if1", "protrek", "proteinmpnn"]))
+            str_rna_models = list(batch[0].get("str_rna_models", ["rna_ernie", "rnabert", "rhofold"]))
+            strict = bool(batch[0].get("embedding_strict", True))
+            seq_prot_embeds = {name: [] for name in seq_prot_models}
+            seq_rna_embeds = {name: [] for name in seq_rna_models}
+            str_prot_embeds = {name: [] for name in str_prot_models}
+            str_rna_embeds = {name: [] for name in str_rna_models}
+
+            def _load_embedding(base_dir, name, seq_len, max_len, model_name):
+                path = emb_root / base_dir / model_name / f"{name}.pt"
+                if not path.exists():
+                    if strict:
+                        raise FileNotFoundError(f"Missing embedding: {path}")
+                    return None
+                payload = torch.load(path, map_location="cpu")
+                token_embeddings = payload["token_embeddings"]
+                if token_embeddings.shape[0] != seq_len and strict:
+                    raise ValueError(
+                        f"Embedding length mismatch for {path}: "
+                        f"expected {seq_len}, got {token_embeddings.shape[0]}"
+                    )
+                return self._pad_embedding(token_embeddings, seq_len, max_len)
         
         max_item_prot_length = [item['max_prot_length'] for item in batch]
         max_item_na_length = [item['max_na_length'] for item in batch]
@@ -304,6 +379,9 @@ class CustomStructCollate(object):
             if 'mut_seqs' in item:
                 mut_seqs = item['mut_seqs']
             na_seqs = item['rna_seqs']
+            prot_chain_ids = item.get('prot_chain_ids', [])
+            rna_chain_ids = item.get('rna_chain_ids', [])
+            complex_id = item.get('complex', '')
             for i, prot_seq in enumerate(prot_seqs):
                 prot_batch[curr_prot_idx, 0] = prot_alphabet.cls_idx
                 prot_seq_encode = prot_alphabet.encode(prot_seq)
@@ -316,39 +394,123 @@ class CustomStructCollate(object):
                     seq_m = torch.tensor(mut_seq_encode, dtype=torch.int64)
                     mut_batch[curr_prot_idx, 1: len(mut_seq_encode)+1] = seq_m
                     mut_batch[curr_prot_idx, len(mut_seq_encode)+1] = prot_alphabet.eos_idx
+                if use_precomputed:
+                    chain_id = prot_chain_ids[i] if i < len(prot_chain_ids) else 'X'
+                    name = safe_name(f"{complex_id}_prot_{chain_id or 'X'}")
+                    for model_name in seq_prot_models:
+                        emb = _load_embedding("protein_sequence", name, len(prot_seq), max_prot_length, model_name)
+                        if emb is not None:
+                            seq_prot_embeds[model_name].append(emb)
+                    for model_name in str_prot_models:
+                        emb = _load_embedding("protein_structure", name, len(prot_seq), max_prot_length, model_name)
+                        if emb is not None:
+                            str_prot_embeds[model_name].append(emb)
                 curr_prot_idx += 1
-            for na_seq in na_seqs:
+            for j, na_seq in enumerate(na_seqs):
                 # na_batch[curr_na_idx, 0] = na_alphabet.cls_idx
                 # NA encoder adds CLS and EOS by default
                 na_seq_encode = na_alphabet.encode(na_seq)
                 seq = torch.tensor(na_seq_encode, dtype=torch.int64)
                 na_batch[curr_na_idx, :len(seq)] = seq
                 # na_batch[curr_na_idx, len(na_seq_encode)+1] = na_alphabet.eos_idx
+                if use_precomputed:
+                    chain_id = rna_chain_ids[j] if j < len(rna_chain_ids) else 'X'
+                    name = safe_name(f"{complex_id}_rna_{chain_id or 'X'}")
+                    for model_name in seq_rna_models:
+                        emb = _load_embedding("rna_sequence", name, len(na_seq), max_na_length, model_name)
+                        if emb is not None:
+                            seq_rna_embeds[model_name].append(emb)
+                    for model_name in str_rna_models:
+                        emb = _load_embedding("rna_structure", name, len(na_seq), max_na_length, model_name)
+                        if emb is not None:
+                            str_rna_embeds[model_name].append(emb)
                 curr_na_idx += 1
         prot_mask = torch.zeros_like(prot_batch)
         na_mask = torch.zeros_like(na_batch)
         prot_mask[(prot_batch!=prot_alphabet.padding_idx) & (prot_batch!=prot_alphabet.eos_idx) & (prot_batch!=prot_alphabet.cls_idx)] = 1
         na_mask[(na_batch!=na_alphabet.pad_idx) & (na_batch!=na_alphabet.eos_idx) & (na_batch!=na_alphabet.cls_idx)] = 1
-        if mut_flag:
-            return prot_batch.long(), mut_batch.long(), prot_chains, prot_mask, na_batch.long(), na_chains, na_mask
+        if use_precomputed:
+            seq_prot_batch = {name: torch.stack(seq_prot_embeds[name], dim=0) for name in seq_prot_models}
+            seq_rna_batch = {name: torch.stack(seq_rna_embeds[name], dim=0) for name in seq_rna_models}
+            str_prot_batch = {name: torch.stack(str_prot_embeds[name], dim=0) for name in str_prot_models}
+            str_rna_batch = {name: torch.stack(str_rna_embeds[name], dim=0) for name in str_rna_models}
         else:
-            return prot_batch.long(), prot_chains, prot_mask, na_batch.long(), na_chains, na_mask
+            seq_prot_batch = None
+            seq_rna_batch = None
+            str_prot_batch = None
+            str_rna_batch = None
+        if mut_flag:
+            return (
+                prot_batch.long(),
+                mut_batch.long(),
+                prot_chains,
+                prot_mask,
+                na_batch.long(),
+                na_chains,
+                na_mask,
+                seq_prot_batch,
+                seq_rna_batch,
+                str_prot_batch,
+                str_rna_batch,
+            )
+        else:
+            return (
+                prot_batch.long(),
+                prot_chains,
+                prot_mask,
+                na_batch.long(),
+                na_chains,
+                na_mask,
+                seq_prot_batch,
+                seq_rna_batch,
+                str_prot_batch,
+                str_rna_batch,
+            )
 
     def __call__(self, data_list):
         data_list_padded = self.collate_complex(data_list)
         batch = default_collate(data_list_padded)
         batch['size'] = len(data_list_padded)
         if 'mut_seqs' in data_list[0]:
-            prot_batch, mut_batch, prot_chains, prot_mask, na_batch, na_chains, na_mask = self.pad_for_berts(self.strategy, data_list)
+            (
+                prot_batch,
+                mut_batch,
+                prot_chains,
+                prot_mask,
+                na_batch,
+                na_chains,
+                na_mask,
+                seq_prot_batch,
+                seq_rna_batch,
+                str_prot_batch,
+                str_rna_batch,
+            ) = self.pad_for_berts(self.strategy, data_list)
             batch['prot_mut'] = mut_batch
         else:
-            prot_batch, prot_chains, prot_mask, na_batch, na_chains, na_mask = self.pad_for_berts(self.strategy, data_list)
+            (
+                prot_batch,
+                prot_chains,
+                prot_mask,
+                na_batch,
+                na_chains,
+                na_mask,
+                seq_prot_batch,
+                seq_rna_batch,
+                str_prot_batch,
+                str_rna_batch,
+            ) = self.pad_for_berts(self.strategy, data_list)
         batch['prot'] = prot_batch
         batch['prot_chains'] = prot_chains
         batch['protein_mask'] = prot_mask
         batch['na'] = na_batch
         batch['na_chains'] = na_chains
         batch['na_mask'] = na_mask
+        if seq_prot_batch is not None:
+            batch['seq_prot_embeddings'] = seq_prot_batch
+            batch['seq_rna_embeddings'] = seq_rna_batch
+            batch['str_prot_embeddings'] = str_prot_batch
+            batch['str_rna_embeddings'] = str_rna_batch
+            batch['use_precomputed_embeddings'] = True
         batch['strategy'] = self.strategy
         batch['labels'] = batch['labels'].float()
         return batch

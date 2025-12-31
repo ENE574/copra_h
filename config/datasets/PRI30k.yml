@@ -1,7 +1,8 @@
 dataset_type: 'pri30k_dataset'
 df_path: './datasets/PRI30k/splits/pretrain_length_750_clean.csv'
-batch_size: 20
+batch_size: 4
 data_root: './datasets/PRI30k/PDBs'
+embedding_root: './outputs/feature_extraction_PRI30k'
 num_workers: 0
 col_prot_name: PDB
 col_prot_chain: Protein chains

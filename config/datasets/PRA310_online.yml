@@ -25,7 +25,7 @@ seq_rna_models:
 str_prot_models:
   - 'esm_if1'
   - 'protrek'
-  - 'proteinmpnn'
+  - 'protbert'
 str_rna_models:
   - 'rna_ernie'
   - 'rnabert'
@@ -43,7 +43,7 @@ rna_ernie_weights: './weights/RNAErnie_weights'
 rna_ernie_vocab: 'RNAErnie/data/vocab/vocab_1MER.txt'
 rnabert_weights: './weights/RNABERT_weights/bert_mul_2.pth'
 rhofold_weights: './weights/RhFold_weights/model_20221010_params.pt'
-protein_mpnn_weights: './weights/ProteinMPNN_weights/v_48_020.pt'
+protbert_weights: './weights/ProtBert_weights'
 protrek_weights_dir: './weights/ProTrek_weights'
 protrek_foldseek_bin: './ProTrek/bin/foldseek'
 rna_msm_root_path: '.'

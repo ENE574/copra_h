@@ -100,6 +100,16 @@ def check_proteinmpnn(cfg, base: Path):
     model.load_state_dict(checkpoint["model_state_dict"])
 
 
+def check_protbert(cfg, base: Path):
+    from transformers import BertModel, BertTokenizer
+
+    model_dir = _as_path(base, cfg.get("model_dir", "weights/ProtBert_weights"))
+    if not model_dir or not Path(model_dir).exists():
+        raise FileNotFoundError(f"missing model_dir: {model_dir}")
+    BertTokenizer.from_pretrained(model_dir, do_lower_case=False)
+    BertModel.from_pretrained(model_dir)
+
+
 def check_alphafold2(cfg, base: Path):
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "alphafold" / "run_alphafold.py"
@@ -233,8 +243,8 @@ def main() -> int:
     protein_structure = cfg.get("protein_structure", {}).get("models", {})
     if protein_structure.get("esm_if1", {}).get("enabled", True):
         failures += 0 if _guard(lambda: check_esm_if1(protein_structure.get("esm_if1", {}), base), "esm_if1") else 1
-    if protein_structure.get("proteinmpnn", {}).get("enabled", True):
-        failures += 0 if _guard(lambda: check_proteinmpnn(protein_structure.get("proteinmpnn", {}), base), "proteinmpnn") else 1
+    if protein_structure.get("protbert", {}).get("enabled", True):
+        failures += 0 if _guard(lambda: check_protbert(protein_structure.get("protbert", {}), base), "protbert") else 1
     if protein_structure.get("alphafold2", {}).get("enabled", False):
         failures += 0 if _guard(lambda: check_alphafold2(protein_structure.get("alphafold2", {}), base), "alphafold2") else 1
     if protein_structure.get("protrek", {}).get("enabled", False):

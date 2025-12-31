@@ -43,6 +43,7 @@ class StructureDatasetOnline(StructureDataset):
         rnabert_weights: Optional[str] = None,
         rhofold_weights: Optional[str] = None,
         protein_mpnn_weights: Optional[str] = None,
+        protbert_weights: Optional[str] = None,
         protrek_weights_dir: Optional[str] = None,
         protrek_foldseek_bin: Optional[str] = None,
         rna_msm_root_path: Optional[str] = None,
@@ -65,6 +66,7 @@ class StructureDatasetOnline(StructureDataset):
         self.rnabert_weights = rnabert_weights
         self.rhofold_weights = rhofold_weights
         self.protein_mpnn_weights = protein_mpnn_weights
+        self.protbert_weights = protbert_weights
         self.protrek_weights_dir = protrek_weights_dir
         self.protrek_foldseek_bin = protrek_foldseek_bin
         self.rna_msm_root_path = rna_msm_root_path
@@ -174,7 +176,10 @@ class StructureDatasetOnline(StructureDataset):
         }
         str_prot_extractors = {
             "esm_if1": (extractors.extract_esm_if1, {"device": self.online_device}),
-            "proteinmpnn": (extractors.extract_protein_mpnn, {"device": self.online_device, "model_weights": self.protein_mpnn_weights}),
+            "protbert": (
+                extractors.extract_protbert,
+                {"device": self.online_device, "model_dir": self.protbert_weights, "batch_size": self.online_batch_size},
+            ),
             "protrek": (
                 extractors.extract_protrek,
                 {
@@ -241,9 +246,14 @@ class StructureDatasetOnline(StructureDataset):
                     need_any = True
                     break
             if need_any:
-                self._ensure_structure_embeddings(
-                    pdb_path, "protein_structure", model_name, extractor_fn, extractor_kwargs
-                )
+                if model_name == "protbert":
+                    self._ensure_sequence_embeddings(
+                        protein_records, "protein_structure", model_name, extractor_fn, extractor_kwargs
+                    )
+                else:
+                    self._ensure_structure_embeddings(
+                        pdb_path, "protein_structure", model_name, extractor_fn, extractor_kwargs
+                    )
 
         for model_name in self.str_rna_models:
             if model_name not in str_rna_extractors:

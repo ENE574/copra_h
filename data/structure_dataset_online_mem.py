@@ -43,6 +43,7 @@ class StructureDatasetOnlineMem(StructureDataset):
         rnabert_weights: Optional[str] = None,
         rhofold_weights: Optional[str] = None,
         protein_mpnn_weights: Optional[str] = None,
+        protbert_weights: Optional[str] = None,
         protrek_weights_dir: Optional[str] = None,
         protrek_foldseek_bin: Optional[str] = None,
         rna_msm_root_path: Optional[str] = None,
@@ -69,6 +70,7 @@ class StructureDatasetOnlineMem(StructureDataset):
         self.rnabert_weights = rnabert_weights
         self.rhofold_weights = rhofold_weights
         self.protein_mpnn_weights = protein_mpnn_weights
+        self.protbert_weights = protbert_weights
         self.protrek_weights_dir = protrek_weights_dir
         self.protrek_foldseek_bin = protrek_foldseek_bin
         self.rna_msm_root_path = rna_msm_root_path
@@ -130,6 +132,17 @@ class StructureDatasetOnlineMem(StructureDataset):
         model = EsmForMaskedLM.from_pretrained(self.saprot_weights)
         model.eval().to(self.online_device)
         self._model_cache["saprot"] = (model, tokenizer)
+        return model, tokenizer
+
+    def _get_protbert(self):
+        if "protbert" in self._model_cache:
+            return self._model_cache["protbert"]
+        from transformers import BertModel, BertTokenizer
+
+        tokenizer = BertTokenizer.from_pretrained(self.protbert_weights, do_lower_case=False)
+        model = BertModel.from_pretrained(self.protbert_weights)
+        model.eval().to(self.online_device)
+        self._model_cache["protbert"] = (model, tokenizer)
         return model, tokenizer
 
     def _get_rinalmo(self):
@@ -469,6 +482,25 @@ class StructureDatasetOnlineMem(StructureDataset):
         rep = h_V[0, :true_len].detach().cpu()
         return rep
 
+    def _extract_struct_protbert(self, seq: str) -> torch.Tensor:
+        model, tokenizer = self._get_protbert()
+        seq_clean = extractors._sanitize_protein_sequence(seq)
+        enc = tokenizer(
+            seq_clean,
+            add_special_tokens=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = enc["input_ids"].to(self.online_device)
+        attention_mask = enc["attention_mask"].to(self.online_device)
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        embeddings = outputs.last_hidden_state[0]
+        valid_len = int(attention_mask[0].sum().item())
+        token_len = max(0, valid_len - 2)
+        seq_len = min(len(seq), token_len)
+        rep = embeddings[1 : 1 + seq_len].detach().cpu()
+        return rep
+
     def _extract_struct_protrek(self, pdb_path: Path, chain_id: str) -> torch.Tensor:
         from ProTrek.utils.foldseek_util import get_struc_seq
 
@@ -630,8 +662,8 @@ class StructureDatasetOnlineMem(StructureDataset):
                     continue
                 if model_name == "esm_if1":
                     emb = self._extract_struct_esm_if1(pdb_path, cid)
-                elif model_name == "proteinmpnn":
-                    emb = self._extract_struct_protein_mpnn(pdb_path, cid)
+                elif model_name == "protbert":
+                    emb = self._extract_struct_protbert(seq)
                 elif model_name == "protrek":
                     emb = self._extract_struct_protrek(pdb_path, cid)
                 else:

@@ -43,10 +43,114 @@ def ensure_dir(path: str) -> Path:
     return p
 
 
+def _resolve_pdb_files(pdb_dir: str, pdb_list: Optional[Iterable[str]]) -> List[Path]:
+    if pdb_list is not None:
+        base_dir = Path(pdb_dir)
+        files = []
+        for item in pdb_list:
+            p = Path(item)
+            if not p.is_absolute():
+                p = base_dir / item
+            if p.exists() and p.suffix.lower() in {".pdb", ".cif"}:
+                files.append(p)
+        return sorted(set(files), key=lambda path: path.name)
+    pdb_dir = Path(pdb_dir)
+    return sorted([p for p in pdb_dir.iterdir() if p.suffix in {".pdb", ".cif"}])
+
+
+def _pdb_base_id(pdb_path: Path) -> str:
+    """Return the dataset-level PDB id (strip chain suffixes in filenames like 1ABC_A_B.cif)."""
+    return pdb_path.stem.split("_", 1)[0]
+
+
+def _split_filename_chains(pdb_path: Path) -> Tuple[Optional[str], Optional[str]]:
+    """Parse {pdb}_{prot_chain}_{rna_chain}.(cif|pdb) style names."""
+    parts = pdb_path.stem.split("_")
+    if len(parts) < 3:
+        return None, None
+    prot_chain = "_".join(parts[1:-1]).strip()
+    rna_chain = parts[-1].strip()
+    if not prot_chain or not rna_chain:
+        return None, None
+    return prot_chain, rna_chain
+
+
+def _preferred_protein_chain_ids(output_dir: Path, pdb_path: Path, chain_id: Optional[str]) -> List[str]:
+    if chain_id:
+        return [chain_id]
+    prot_chain, _ = _split_filename_chains(pdb_path)
+    if prot_chain:
+        return [prot_chain]
+    return _get_expected_chain_ids(output_dir, pdb_path) or get_protein_chain_ids(pdb_path)
+
+
+def _find_chain_id_in_model(model, chain_id: str) -> Optional[str]:
+    if chain_id in model:
+        return chain_id
+    target = chain_id.lower()
+    matches = [chain.id for chain in model.get_chains() if chain.id.lower() == target]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _chain_id_candidates(pdb_path: Path, chain_id: str) -> List[str]:
+    if not chain_id:
+        return []
+    candidates = [chain_id]
+    label_ids = get_protein_chain_ids(pdb_path)
+    if chain_id not in label_ids:
+        for cid in label_ids:
+            if cid.lower() == chain_id.lower() and cid not in candidates:
+                candidates.append(cid)
+    if pdb_path.suffix.lower() == ".cif":
+        auth_ids = get_protein_chain_ids(pdb_path, auth_chains=True)
+        if chain_id not in auth_ids:
+            for cid in auth_ids:
+                if cid.lower() == chain_id.lower() and cid not in candidates:
+                    candidates.append(cid)
+    return candidates
+
+
+def _get_model_chain(pdb_path: Path, chain_id: str):
+    from Bio.PDB import MMCIFParser, PDBParser
+
+    fallback = (None, None)
+    if pdb_path.suffix.lower() == ".cif":
+        for use_auth in (False, True):
+            parser = MMCIFParser(QUIET=True, auth_chains=use_auth)
+            structure = parser.get_structure(pdb_path.stem, str(pdb_path))
+            model0 = next(structure.get_models(), None)
+            if model0 is None:
+                continue
+            resolved = _find_chain_id_in_model(model0, chain_id)
+            if resolved:
+                chain = model0[resolved]
+                if _chain_has_protein_residue(chain):
+                    return model0, resolved
+                if fallback == (None, None):
+                    fallback = (model0, resolved)
+    else:
+        parser = PDBParser(QUIET=True)
+        structure = parser.get_structure(pdb_path.stem, str(pdb_path))
+        model0 = next(structure.get_models(), None)
+        if model0 is None:
+            return fallback
+        resolved = _find_chain_id_in_model(model0, chain_id)
+        if resolved:
+            chain = model0[resolved]
+            if _chain_has_protein_residue(chain):
+                return model0, resolved
+            if fallback == (None, None):
+                fallback = (model0, resolved)
+    return fallback
+
+
 def _get_reference_length(output_dir: Path, pdb_path: Path, chain_id: str) -> Optional[int]:
     """Try to read reference fasta length for pdb+chain from inputs/protein_single."""
     inputs_dir = output_dir.parent.parent / "inputs" / "protein_single"
-    fasta_path = inputs_dir / f"{pdb_path.stem}_prot_{chain_id}.fasta"
+    base_id = _pdb_base_id(pdb_path)
+    fasta_path = inputs_dir / f"{base_id}_prot_{chain_id}.fasta"
     if not fasta_path.exists():
         return None
     try:
@@ -63,9 +167,49 @@ def safe_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in name)
 
 
+OUTPUT_EMBED_DIM = 0
+
+
+def set_output_embed_dim(dim: Optional[int]) -> None:
+    global OUTPUT_EMBED_DIM
+    if dim is None:
+        OUTPUT_EMBED_DIM = 0
+        return
+    OUTPUT_EMBED_DIM = int(dim)
+
+
+def _adjust_embedding_dim(emb: torch.Tensor) -> torch.Tensor:
+    target = OUTPUT_EMBED_DIM
+    if not target or target <= 0:
+        return emb
+    if emb.shape[-1] == target:
+        return emb
+    if emb.shape[-1] > target:
+        return emb[..., :target]
+    pad_shape = list(emb.shape[:-1]) + [target - emb.shape[-1]]
+    pad = torch.zeros(pad_shape, dtype=emb.dtype, device=emb.device)
+    return torch.cat([emb, pad], dim=-1)
+
+
 def save_tensor_payload(path: Path, payload: Dict[str, torch.Tensor]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if OUTPUT_EMBED_DIM and "token_embeddings" in payload:
+        payload = dict(payload)
+        token_embeddings = payload.get("token_embeddings")
+        if isinstance(token_embeddings, torch.Tensor):
+            payload["token_embeddings"] = _adjust_embedding_dim(token_embeddings)
+        seq_embedding = payload.get("sequence_embedding")
+        if isinstance(seq_embedding, torch.Tensor):
+            payload["sequence_embedding"] = _adjust_embedding_dim(seq_embedding)
     torch.save(payload, path)
+
+
+def _rewrite_embeddings_in_dir(output_dir: Path) -> None:
+    for emb_path in output_dir.glob("*.pt"):
+        payload = torch.load(emb_path, map_location="cpu")
+        if not isinstance(payload, dict) or "token_embeddings" not in payload:
+            continue
+        save_tensor_payload(emb_path, payload)
 
 
 def save_numpy_payload(path: Path, payload: Dict[str, np.ndarray]) -> None:
@@ -92,6 +236,9 @@ NONSTANDARD_RESIDUE_MAP = {
     "CSD": "CYS",
     "CSO": "CYS",
     "CSX": "CYS",
+    "CME": "CYS",
+    "CMT": "CYS",
+    "SAH": "MET",
     "HYP": "PRO",  # hydroxyproline
     "DPR": "PRO",  # D-proline
     "F2F": "PHE",
@@ -107,10 +254,105 @@ NONSTANDARD_RESIDUE_MAP = {
 }
 
 
-def get_protein_chain_ids(pdb_path: Path) -> List[str]:
+def _get_expected_chain_ids(output_dir: Path, pdb_path: Path) -> Optional[List[str]]:
+    inputs_dir = output_dir.parent.parent / "inputs" / "protein_single"
+    if not inputs_dir.exists():
+        return None
+    base_id = _pdb_base_id(pdb_path)
+    chain_ids = []
+    for fasta_path in inputs_dir.glob(f"{base_id}_prot_*.fasta"):
+        stem = fasta_path.stem
+        if not stem.startswith(f"{base_id}_prot_"):
+            continue
+        chain_ids.append(stem.split("_prot_", 1)[1])
+    return sorted(set(chain_ids)) or None
+
+
+def _residue_has_atoms(residue, atom_names: Iterable[str]) -> bool:
+    return all(atom_name in residue for atom_name in atom_names)
+
+
+def _chain_has_protein_residue(chain) -> bool:
+    from Bio.PDB import Polypeptide
+
+    for residue in chain:
+        resname = residue.get_resname().strip().upper()
+        if Polypeptide.is_aa(residue, standard=False):
+            return True
+        if resname in NONSTANDARD_RESIDUE_MAP:
+            return True
+        if _residue_has_atoms(residue, ["N", "CA", "C"]):
+            return True
+    return False
+
+
+def _chain_backbone_stats(pdb_path: Path, chain_id: str) -> Tuple[int, int]:
+    """Return (#res with N/CA/C, #res with CA) for the resolved chain."""
+    model0, resolved_chain = _get_model_chain(pdb_path, chain_id)
+    if model0 is None or not resolved_chain:
+        return 0, 0
+    with_ncac = 0
+    with_ca = 0
+    for residue in model0[resolved_chain]:
+        if "CA" in residue:
+            with_ca += 1
+        if _residue_has_atoms(residue, ["N", "CA", "C"]):
+            with_ncac += 1
+    return with_ncac, with_ca
+
+
+def _write_clean_chain_pdb(
+    pdb_path: Path,
+    chain_id: str,
+    dest_path: Path,
+    ca_only: bool = False,
+) -> bool:
+    from Bio.PDB import PDBIO, Polypeptide
+    from Bio.PDB.Structure import Structure
+    from Bio.PDB.Model import Model
+    from Bio.PDB.Chain import Chain
+
+    model0, resolved_chain = _get_model_chain(pdb_path, chain_id)
+    if model0 is None or not resolved_chain:
+        return False
+    required_atoms = ["CA"] if ca_only else ["N", "CA", "C"]
+    new_struct = Structure("tmp")
+    new_model = Model(0)
+    new_chain = Chain("A")
+    new_struct.add(new_model)
+    new_model.add(new_chain)
+    res_idx = 1
+    for residue in model0[resolved_chain]:
+        if not _residue_has_atoms(residue, required_atoms):
+            continue
+        resname = residue.get_resname().strip().upper()
+        if Polypeptide.is_aa(residue, standard=True):
+            mapped = resname
+        elif resname in NONSTANDARD_RESIDUE_MAP:
+            mapped = NONSTANDARD_RESIDUE_MAP[resname]
+        else:
+            mapped = "GLY"
+        new_res = residue.copy()
+        new_res.resname = mapped
+        new_res.id = (" ", res_idx, " ")
+        res_idx += 1
+        new_chain.add(new_res)
+    if res_idx == 1:
+        return False
+    io = PDBIO()
+    io.set_structure(new_struct)
+    io.save(str(dest_path))
+    return True
+
+
+def get_protein_chain_ids(pdb_path: Path, auth_chains: bool = False) -> List[str]:
     from Bio.PDB import MMCIFParser, PDBParser, Polypeptide
 
-    parser = MMCIFParser(QUIET=True) if pdb_path.suffix.lower() == ".cif" else PDBParser(QUIET=True)
+    parser = (
+        MMCIFParser(QUIET=True, auth_chains=auth_chains)
+        if pdb_path.suffix.lower() == ".cif"
+        else PDBParser(QUIET=True)
+    )
     structure = parser.get_structure(pdb_path.stem, str(pdb_path))
     chain_ids = []
     for model in structure:
@@ -121,6 +363,9 @@ def get_protein_chain_ids(pdb_path: Path) -> List[str]:
                     has_aa = True
                     break
                 if residue.get_resname() in NONSTANDARD_RESIDUE_MAP:
+                    has_aa = True
+                    break
+                if _residue_has_atoms(residue, ["N", "CA", "C"]):
                     has_aa = True
                     break
             if has_aa:
@@ -341,6 +586,54 @@ def extract_rinalmo(
                 save_tensor_payload(output_dir / f"{safe_name(label)}.pt", payload)
 
 
+def extract_protbert(
+    fasta_path: str,
+    output_dir: str,
+    device: str = "cuda",
+    model_dir: str = "weights/ProtBert_weights",
+    batch_size: int = 1,
+) -> None:
+    from transformers import BertModel, BertTokenizer
+
+    tokenizer = BertTokenizer.from_pretrained(model_dir, do_lower_case=False)
+    model = BertModel.from_pretrained(model_dir)
+    model.eval()
+    device_obj = _device_from_string(device)
+    model = model.to(device_obj)
+
+    records = read_fasta(fasta_path)
+    output_dir = ensure_dir(output_dir)
+
+    with torch.no_grad():
+        for batch in chunked(records, batch_size):
+            labels, raw_seqs = zip(*batch)
+            seqs = [_sanitize_protein_sequence(s) for s in raw_seqs]
+            enc = tokenizer.batch_encode_plus(
+                seqs,
+                add_special_tokens=True,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
+            input_ids = enc["input_ids"].to(device_obj)
+            attention_mask = enc["attention_mask"].to(device_obj)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            embeddings = outputs.last_hidden_state
+            for i, label in enumerate(labels):
+                valid_len = int(attention_mask[i].sum().item())
+                token_len = max(0, valid_len - 2)
+                seq_len = min(len(raw_seqs[i]), token_len)
+                residue_rep = embeddings[i, 1 : 1 + seq_len].detach().cpu()
+                seq_rep = residue_rep.mean(0) if residue_rep.numel() else torch.zeros(
+                    embeddings.shape[-1]
+                )
+                payload = {
+                    "token_embeddings": residue_rep,
+                    "sequence_embedding": seq_rep,
+                }
+                save_tensor_payload(output_dir / f"{safe_name(label)}.pt", payload)
+
+
 def extract_rna_fm(
     fasta_path: str,
     output_dir: str,
@@ -388,6 +681,7 @@ def extract_esm_if1(
     device: str = "cuda",
     model_location: Optional[str] = None,
     chain_id: Optional[str] = None,
+    pdb_list: Optional[Iterable[str]] = None,
 ) -> None:
     import esm
     from esm.inverse_folding import util as if_util
@@ -401,46 +695,40 @@ def extract_esm_if1(
     model = model.to(device_obj)
 
     output_dir = ensure_dir(output_dir)
-    pdb_dir = Path(pdb_dir)
-    pdb_files = sorted([p for p in pdb_dir.iterdir() if p.suffix in {".pdb", ".cif"}])
+    pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
+    tmp_dir = ensure_dir(str(output_dir / "_tmp_pdb"))
 
     with torch.no_grad():
         for pdb_path in pdb_files:
-            chain_ids = [chain_id] if chain_id else get_protein_chain_ids(pdb_path)
+            base_id = _pdb_base_id(pdb_path)
+            chain_ids = _preferred_protein_chain_ids(output_dir, pdb_path, chain_id)
             if not chain_ids:
                 continue
-            tmp_path = None
-            if pdb_path.suffix.lower() == ".pdb":
-                tmp_dir = ensure_dir(str(output_dir / "_tmp_pdb"))
-                tmp_path = tmp_dir / pdb_path.name
             for cid in chain_ids:
-                try:
-                    coords, _ = if_util.load_coords(str(pdb_path), cid)
-                except KeyError as exc:
-                    if pdb_path.suffix.lower() == ".pdb":
-                        if tmp_path and not tmp_path.exists():
-                            from biotite.sequence.seqtypes import ProteinSequence
-
-                            std_map = ProteinSequence._dict_3to1
-                            mapping = NONSTANDARD_RESIDUE_MAP
-                            with open(pdb_path, "r", encoding="utf-8", errors="ignore") as handle:
-                                lines = handle.readlines()
-                            new_lines = []
-                            for line in lines:
-                                if line.startswith(("ATOM  ", "HETATM", "LINK  ")) and len(line) >= 20:
-                                    resname = line[17:20]
-                                    if resname not in std_map:
-                                        mapped = mapping.get(resname, "GLY")
-                                        line = line[:17] + mapped + line[20:]
-                                new_lines.append(line)
-                            tmp_path.write_text("".join(new_lines))
-                        try:
-                            coords, _ = if_util.load_coords(str(tmp_path), cid)
-                        except KeyError as exc2:
-                            print(f"[esm_if1] Skipping {pdb_path.name} chain {cid}: unknown residue {exc2}.")
-                            continue
-                    else:
-                        print(f"[esm_if1] Skipping {pdb_path.name} chain {cid}: unknown residue {exc}.")
+                name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
+                out_path = output_dir / f"{name}.pt"
+                if out_path.exists():
+                    continue
+                tmp_path = None
+                coord_loaded = False
+                last_exc: Optional[Exception] = None
+                for cid_try in _chain_id_candidates(pdb_path, cid):
+                    try:
+                        coords, _ = if_util.load_coords(str(pdb_path), cid_try)
+                        coord_loaded = True
+                        break
+                    except Exception as exc:
+                        last_exc = exc
+                if not coord_loaded:
+                    tmp_path = tmp_dir / f"{pdb_path.stem}_{safe_name(cid)}.pdb"
+                    if not _write_clean_chain_pdb(pdb_path, cid, tmp_path):
+                        reason = f"{last_exc}" if last_exc else "unknown"
+                        print(f"[esm_if1] Skipping {pdb_path.name} chain {cid}: unable to sanitize chain ({reason}).")
+                        continue
+                    try:
+                        coords, _ = if_util.load_coords(str(tmp_path), "A")
+                    except Exception as exc2:
+                        print(f"[esm_if1] Skipping {pdb_path.name} chain {cid}: {exc2}.")
                         continue
                 batch_converter = if_util.CoordBatchConverter(alphabet)
                 coords_tensor, confidence, _, _, padding_mask = batch_converter(
@@ -458,10 +746,9 @@ def extract_esm_if1(
                     "sequence_embedding": rep.detach().cpu().mean(0),
                     "chain_id": cid,
                 }
-                name = f"{safe_name(pdb_path.stem)}_prot_{safe_name(cid)}"
-                save_tensor_payload(output_dir / f"{name}.pt", payload)
-            if tmp_path and tmp_path.exists():
-                tmp_path.unlink()
+                save_tensor_payload(out_path, payload)
+                if tmp_path and tmp_path.exists():
+                    tmp_path.unlink()
 
 
 def extract_protein_mpnn(
@@ -469,7 +756,9 @@ def extract_protein_mpnn(
     output_dir: str,
     device: str = "cuda",
     model_weights: str = "weights/ProteinMPNN_weights/v_48_020.pt",
+    model_weights_ca_only: Optional[str] = None,
     ca_only: bool = False,
+    pdb_list: Optional[Iterable[str]] = None,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.append(str(repo_root / "ProteinMPNN"))
@@ -493,19 +782,161 @@ def extract_protein_mpnn(
     model.eval()
     device_obj = _device_from_string(device)
     model = model.to(device_obj)
+    model_ca_only = None
+    ca_only_supported: Optional[bool] = None
+    ca_only_reason: Optional[str] = None
+
+    def _ensure_ca_only_model() -> Optional[mpnn_utils.ProteinMPNN]:
+        nonlocal model_ca_only
+        nonlocal ca_only_supported, ca_only_reason
+        if ca_only_supported is False:
+            return None
+        if model_ca_only is None:
+            if not model_weights_ca_only:
+                ca_only_supported = False
+                ca_only_reason = "CA-only checkpoint not provided"
+                return None
+            checkpoint_ca = torch.load(model_weights_ca_only, map_location="cpu")
+            ckpt_edge = checkpoint_ca.get("model_state_dict", {}).get("features.edge_embedding.weight")
+            model_ca_only = mpnn_utils.ProteinMPNN(
+                num_letters=21,
+                node_features=checkpoint_ca.get("hidden_dim", hidden_dim),
+                edge_features=checkpoint_ca.get("hidden_dim", hidden_dim),
+                hidden_dim=checkpoint_ca.get("hidden_dim", hidden_dim),
+                num_encoder_layers=checkpoint_ca.get("num_layers", num_layers),
+                num_decoder_layers=checkpoint_ca.get("num_layers", num_layers),
+                augment_eps=0.0,
+                k_neighbors=checkpoint_ca.get("num_edges", checkpoint["num_edges"]),
+                ca_only=True,
+            )
+            if ckpt_edge is None or ckpt_edge.shape != model_ca_only.features.edge_embedding.weight.shape:
+                ca_only_supported = False
+                ca_only_reason = "CA-only weights incompatible with checkpoint"
+                model_ca_only = None
+                return None
+            try:
+                model_ca_only.load_state_dict(checkpoint_ca["model_state_dict"])
+            except RuntimeError as exc:
+                ca_only_supported = False
+                ca_only_reason = f"CA-only weights load failed: {exc}"
+                model_ca_only = None
+                return None
+            model_ca_only.eval()
+            model_ca_only = model_ca_only.to(device_obj)
+            ca_only_supported = True
+        return model_ca_only
 
     output_dir = ensure_dir(output_dir)
-    pdb_dir = Path(pdb_dir)
-    pdb_files = sorted([p for p in pdb_dir.iterdir() if p.suffix == ".pdb"])
+    pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
+
+    if ca_only:
+        model_ca = _ensure_ca_only_model()
+        if model_ca is None:
+            reason = ca_only_reason or "CA-only checkpoint not provided or incompatible"
+            raise RuntimeError(f"ProteinMPNN CA-only requested but unavailable: {reason}")
+        model = model_ca
 
     with torch.no_grad():
         for pdb_path in pdb_files:
-            chain_ids = get_protein_chain_ids(pdb_path)
+            base_id = _pdb_base_id(pdb_path)
+            chain_ids = _preferred_protein_chain_ids(output_dir, pdb_path, None)
+            if pdb_path.suffix.lower() == ".cif":
+                tmp_dir = ensure_dir(str(output_dir / "_tmp_pdb"))
+
+                for cid in chain_ids:
+                    name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
+                    out_path = output_dir / f"{name}.pt"
+                    if out_path.exists():
+                        continue
+                    use_ca_only = ca_only
+                    tmp_path = tmp_dir / f"{pdb_path.stem}_{safe_name(cid)}.pdb"
+                    if not tmp_path.exists():
+                        if not _write_clean_chain_pdb(pdb_path, cid, tmp_path, ca_only=ca_only):
+                            if not ca_only:
+                                with_ncac, with_ca = _chain_backbone_stats(pdb_path, cid)
+                                if with_ncac == 0 and with_ca > 0:
+                                    if not _write_clean_chain_pdb(pdb_path, cid, tmp_path, ca_only=True):
+                                        continue
+                                    model_ca = _ensure_ca_only_model()
+                                    if model_ca is None:
+                                        reason = ca_only_reason or "CA-only weights unavailable"
+                                        print(f"[proteinmpnn] Skipping {pdb_path.name} chain {cid}: {reason}.")
+                                        continue
+                                    use_ca_only = True
+                                else:
+                                    continue
+                            else:
+                                continue
+                    pdb_dict_list = mpnn_utils.parse_PDB(str(tmp_path), input_chain_list=["A"], ca_only=use_ca_only)
+                    if not pdb_dict_list:
+                        continue
+                    if not pdb_dict_list[0].get("seq"):
+                        print(f"[proteinmpnn] Skipping {pdb_path.name} chain {cid}: no parseable residues.")
+                        continue
+                    batch = [pdb_dict_list[0]]
+                    model_used = _ensure_ca_only_model() if use_ca_only else model
+                    X, S, mask, lengths, chain_M, chain_encoding_all, _, _, _, _, _, _, residue_idx, _, _, _, _, _, _, _ = mpnn_utils.tied_featurize(
+                        batch,
+                        device=device_obj,
+                        chain_dict=None,
+                        fixed_position_dict=None,
+                        omit_AA_dict=None,
+                        tied_positions_dict=None,
+                        pssm_dict=None,
+                        bias_by_res_dict=None,
+                        ca_only=use_ca_only,
+                    )
+                    X = X.to(device_obj)
+                    mask = mask.to(device_obj)
+                    residue_idx = residue_idx.to(device_obj)
+                    chain_encoding_all = chain_encoding_all.to(device_obj)
+                    E, E_idx = model_used.features(X, mask, residue_idx, chain_encoding_all)
+                    h_V = torch.zeros((E.shape[0], E.shape[1], E.shape[-1]), device=E.device)
+                    h_E = model_used.W_e(E)
+                    mask_attend = mpnn_utils.gather_nodes(mask.unsqueeze(-1), E_idx).squeeze(-1)
+                    mask_attend = mask.unsqueeze(-1) * mask_attend
+                    for layer in model_used.encoder_layers:
+                        h_V, h_E = layer(h_V, h_E, E_idx, mask, mask_attend)
+                    true_len = int(lengths[0].item())
+                    ref_len = _get_reference_length(Path(output_dir), pdb_path, cid) or true_len
+                    take = min(true_len, ref_len)
+                    rep = h_V[0, :take].detach().cpu()
+                    payload = {
+                        "token_embeddings": rep,
+                        "sequence_embedding": rep.mean(0),
+                        "chain_id": cid,
+                    }
+                    save_tensor_payload(out_path, payload)
+                for tmp_path in tmp_dir.glob(f"{pdb_path.stem}_*.pdb"):
+                    tmp_path.unlink()
+                continue
+
+            pdb_for_mpnn = pdb_path
             for cid in chain_ids:
-                pdb_dict_list = mpnn_utils.parse_PDB(str(pdb_path), input_chain_list=[cid], ca_only=ca_only)
+                name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
+                out_path = output_dir / f"{name}.pt"
+                if out_path.exists():
+                    continue
+                use_ca_only = ca_only
+                pdb_dict_list = mpnn_utils.parse_PDB(str(pdb_for_mpnn), input_chain_list=[cid], ca_only=use_ca_only)
                 if not pdb_dict_list:
+                    if not ca_only:
+                        with_ncac, with_ca = _chain_backbone_stats(pdb_path, cid)
+                        if with_ncac == 0 and with_ca > 0:
+                            model_ca = _ensure_ca_only_model()
+                            if model_ca is None:
+                                reason = ca_only_reason or "CA-only weights unavailable"
+                                print(f"[proteinmpnn] Skipping {pdb_path.name} chain {cid}: {reason}.")
+                                continue
+                            use_ca_only = True
+                            pdb_dict_list = mpnn_utils.parse_PDB(str(pdb_for_mpnn), input_chain_list=[cid], ca_only=True)
+                    if not pdb_dict_list:
+                        continue
+                if not pdb_dict_list[0].get("seq"):
+                    print(f"[proteinmpnn] Skipping {pdb_path.name} chain {cid}: no parseable residues.")
                     continue
                 batch = [pdb_dict_list[0]]
+                model_used = _ensure_ca_only_model() if use_ca_only else model
                 X, S, mask, lengths, chain_M, chain_encoding_all, _, _, _, _, _, _, residue_idx, _, _, _, _, _, _, _ = mpnn_utils.tied_featurize(
                     batch,
                     device=device_obj,
@@ -515,18 +946,18 @@ def extract_protein_mpnn(
                     tied_positions_dict=None,
                     pssm_dict=None,
                     bias_by_res_dict=None,
-                    ca_only=ca_only,
+                    ca_only=use_ca_only,
                 )
                 X = X.to(device_obj)
                 mask = mask.to(device_obj)
                 residue_idx = residue_idx.to(device_obj)
                 chain_encoding_all = chain_encoding_all.to(device_obj)
-                E, E_idx = model.features(X, mask, residue_idx, chain_encoding_all)
+                E, E_idx = model_used.features(X, mask, residue_idx, chain_encoding_all)
                 h_V = torch.zeros((E.shape[0], E.shape[1], E.shape[-1]), device=E.device)
-                h_E = model.W_e(E)
+                h_E = model_used.W_e(E)
                 mask_attend = mpnn_utils.gather_nodes(mask.unsqueeze(-1), E_idx).squeeze(-1)
                 mask_attend = mask.unsqueeze(-1) * mask_attend
-                for layer in model.encoder_layers:
+                for layer in model_used.encoder_layers:
                     h_V, h_E = layer(h_V, h_E, E_idx, mask, mask_attend)
                 true_len = int(lengths[0].item())
                 ref_len = _get_reference_length(Path(output_dir), pdb_path, cid) or true_len
@@ -537,8 +968,8 @@ def extract_protein_mpnn(
                     "sequence_embedding": rep.mean(0),
                     "chain_id": cid,
                 }
-                name = f"{safe_name(pdb_path.stem)}_prot_{safe_name(cid)}"
-                save_tensor_payload(output_dir / f"{name}.pt", payload)
+                save_tensor_payload(out_path, payload)
+            # tmp_path is only used in the CIF branch; nothing to clean here.
 
 
 def extract_protrek(
@@ -553,12 +984,14 @@ def extract_protrek(
     foldseek_bin: Optional[str] = None,
     batch_size: int = 32,
     chain_id: Optional[str] = None,
+    pdb_list: Optional[Iterable[str]] = None,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
     sys.modules.pop("utils", None)
     from ProTrek.model.ProTrek.protrek_trimodal_model import ProTrekTrimodalModel
     from ProTrek.utils.foldseek_util import get_struc_seq
+    from torch.nn.functional import normalize
 
     if not foldseek_bin or not Path(foldseek_bin).exists():
         raise FileNotFoundError(f"Foldseek binary not found: {foldseek_bin}")
@@ -584,29 +1017,51 @@ def extract_protrek(
     model = model.to(device_obj)
 
     output_dir = ensure_dir(output_dir)
-    pdb_dir = Path(pdb_dir)
-    pdb_files = sorted([p for p in pdb_dir.iterdir() if p.suffix in {".pdb", ".cif"}])
+    pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
 
     with torch.no_grad():
         for pdb_path in pdb_files:
-            chain_ids = [chain_id] if chain_id else get_protein_chain_ids(pdb_path)
+            base_id = _pdb_base_id(pdb_path)
+            chain_ids = _preferred_protein_chain_ids(output_dir, pdb_path, chain_id)
             for cid in chain_ids:
-                seq_dict = get_struc_seq(str(foldseek_bin), str(pdb_path), chains=[cid])
-                if not seq_dict or cid not in seq_dict:
+                name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
+                out_path = output_dir / f"{name}.pt"
+                if out_path.exists():
                     continue
-                foldseek_seq = seq_dict[cid][1].lower()
-                reps = model.get_structure_repr([foldseek_seq], batch_size=1)
+                seq_dict = None
+                resolved_chain = None
+                for cid_try in _chain_id_candidates(pdb_path, cid):
+                    seq_dict = get_struc_seq(str(foldseek_bin), str(pdb_path), chains=[cid_try])
+                    if seq_dict and cid_try in seq_dict:
+                        resolved_chain = cid_try
+                        break
+                if not seq_dict or not resolved_chain:
+                    continue
+                foldseek_seq = seq_dict[resolved_chain][1].lower()
                 seq_len = len(foldseek_seq)
+                tokenizer = model.structure_encoder.tokenizer
+                encoder = model.structure_encoder.model.esm
+                proj = model.structure_encoder.out
+                inputs = tokenizer.batch_encode_plus([foldseek_seq], return_tensors="pt", padding=False)
+                inputs = {k: v.to(device_obj) for k, v in inputs.items()}
+                last_hidden = encoder(**inputs).last_hidden_state
+                token_repr = normalize(proj(last_hidden), dim=-1)[0]
+                token_len = token_repr.shape[0]
+                if token_len == seq_len + 2:
+                    token_repr = token_repr[1:-1]
+                elif token_len == seq_len + 1:
+                    token_repr = token_repr[1:]
+                elif token_len > seq_len:
+                    token_repr = token_repr[:seq_len]
                 ref_len = _get_reference_length(Path(output_dir), pdb_path, cid) or seq_len
-                take = min(seq_len, ref_len)
-                rep = reps.detach().cpu()[0][:take]
+                take = min(seq_len, ref_len, token_repr.shape[0])
+                rep = token_repr[:take].detach().cpu()
                 payload = {
                     "token_embeddings": rep,
                     "sequence_embedding": rep.mean(0),
                     "chain_id": cid,
                 }
-                name = f"{safe_name(pdb_path.stem)}_prot_{safe_name(cid)}"
-                save_tensor_payload(output_dir / f"{name}.pt", payload)
+                save_tensor_payload(out_path, payload)
 
 
 def extract_rna_msm(
@@ -741,6 +1196,7 @@ def extract_rnabert(
     ]
     subprocess.run(cmd, check=True)
     cleaned_path.unlink(missing_ok=True)
+    _rewrite_embeddings_in_dir(output_dir)
 
 
 def extract_rhofold(
@@ -796,7 +1252,9 @@ def extract_rhofold(
         else:
             out_name = f"{safe_name(stem)}.pt"
         if tmp_embed.exists():
-            shutil.move(str(tmp_embed), str(output_dir / out_name))
+            target = output_dir / out_name
+            shutil.move(str(tmp_embed), str(target))
+            _rewrite_embeddings_in_dir(output_dir)
         shutil.rmtree(run_output, ignore_errors=True)
 
 

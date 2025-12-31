@@ -1,9 +1,10 @@
 device: cuda
-output_dir: outputs/feature_extraction
+output_dir: outputs/feature_extraction_PRI30k
 
 dataset:
-  csv_path: ./datasets/PRA310/splits/PRA310.csv
-  pdb_dir: ./datasets/PRA310/PDBs
+  csv_path: ./datasets/PRI30k/splits/pretrain_length_750_clean.csv
+  pdb_list_path: ./datasets/PRI30k/splits/pretrain_length_750_clean_pdb_list.txt
+  pdb_dir: ./datasets/PRI30k/PDBs
   id_col: PDB
   protein_seq_col: Protein sequences
   rna_seq_col: RNA sequences
@@ -72,8 +73,8 @@ rna_sequence:
     rna_msm:
       enabled: true
       root_path: .
-      msa_path: RNA-MSM/results
-      msa_list:
+      msa_path: outputs/feature_extraction_PRI30k/inputs/rna_msm_msas
+      msa_list: outputs/feature_extraction_PRI30k/inputs/rna_msm_ids_unique.txt
       model_path: weights/RNA-MSM_weights/RNA_MSM_pretrained.ckpt
       extra_overrides:
 

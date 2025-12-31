@@ -109,7 +109,7 @@ class StructureDataset(Dataset):
         self.rna_embedding_model = rna_embedding_model
         self.seq_prot_models = _ensure_list(seq_prot_models, [protein_embedding_model])
         self.seq_rna_models = _ensure_list(seq_rna_models, [rna_embedding_model])
-        self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1", "protrek", "proteinmpnn"])
+        self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1", "protrek", "protbert"])
         self.str_rna_models = _ensure_list(str_rna_models, ["rna_ernie", "rnabert", "rhofold"])
         self.embedding_strict = embedding_strict
         
@@ -329,7 +329,7 @@ class CustomStructCollate(object):
             emb_root = Path(batch[0].get("embedding_root", "outputs/feature_extraction"))
             seq_prot_models = list(batch[0].get("seq_prot_models", ["esm2"]))
             seq_rna_models = list(batch[0].get("seq_rna_models", ["rinalmo"]))
-            str_prot_models = list(batch[0].get("str_prot_models", ["esm_if1", "protrek", "proteinmpnn"]))
+            str_prot_models = list(batch[0].get("str_prot_models", ["esm_if1", "protrek", "protbert"]))
             str_rna_models = list(batch[0].get("str_rna_models", ["rna_ernie", "rnabert", "rhofold"]))
             strict = bool(batch[0].get("embedding_strict", True))
             seq_prot_embeds = {name: [] for name in seq_prot_models}

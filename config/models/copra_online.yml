@@ -12,7 +12,7 @@ model:
     rna_fm: 640
     esm_if1: 512
     protrek: 1024
-    proteinmpnn: 128
+    protbert: 1024
     rna_ernie: 768
     rnabert: 120
     rhofold: 384
@@ -27,7 +27,7 @@ model:
   str_prot_models:
     - esm_if1
     - protrek
-    - proteinmpnn
+    - protbert
   str_rna_models:
     - rna_ernie
     - rnabert

@@ -51,6 +51,8 @@ class LightningRunner(object):
         self.model_args = parse_yaml(model_config)
         self.dataset_args = parse_yaml(data_config)
         self.run_args = parse_yaml(run_config)
+        if hasattr(self.dataset_args, "embedding_root") and self.dataset_args.embedding_root:
+            self.model_args.model.embedding_root = self.dataset_args.embedding_root
         init_pytorch_settings()
 
     def save_model(self, model, output_dir, trainer):

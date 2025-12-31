@@ -1,4 +1,4 @@
-epochs: 80          # 最大训练轮次（启用早停后通常用不到这么多）
+epochs: 140          # 最大训练轮次（启用早停后通常用不到这么多）
 patience: 10        # val_loss 连续 10 次没有提升则提前停止
 output_dir: './outputs/scratch/PRA310'
 gpus:

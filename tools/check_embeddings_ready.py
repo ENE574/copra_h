@@ -8,7 +8,7 @@ import torch
 
 PROT_SEQ_MODELS = ["esm2", "prott5", "saprot"]
 RNA_SEQ_MODELS = ["rinalmo", "rna_msm", "rna_fm"]
-PROT_STR_MODELS = ["esm_if1", "protrek", "proteinmpnn"]
+PROT_STR_MODELS = ["esm_if1", "protrek", "protbert"]
 RNA_STR_MODELS = ["rna_ernie", "rnabert", "rhofold"]
 
 

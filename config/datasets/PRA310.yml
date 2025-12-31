@@ -25,7 +25,7 @@ seq_rna_models:
 str_prot_models:
   - 'esm_if1'
   - 'protrek'
-  - 'proteinmpnn'
+  - 'protbert'
 str_rna_models:
   - 'rna_ernie'
   - 'rnabert'

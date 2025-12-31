@@ -6,7 +6,7 @@ import yaml
 from typing import Optional, Set
 
 from feature_extraction import extractors
-from feature_extraction.dataset_utils import build_dataset_fastas
+from feature_extraction.dataset_utils import build_dataset_fastas, build_dataset_pdb_list
 
 
 def _load_config(path: str) -> dict:
@@ -62,6 +62,8 @@ def run_protein_sequence(cfg: dict, base_dir: Path, output_root: Path, device: s
 
 def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: str, allowed: Optional[Set[str]] = None) -> None:
     pdb_dir = _as_path(base_dir, cfg.get("pdb_dir"))
+    fasta = _as_path(base_dir, cfg.get("fasta"))
+    pdb_list = cfg.get("pdb_list")
     models = cfg.get("models", {})
     if pdb_dir and models.get("esm_if1", {}).get("enabled", True) and _allowed("esm_if1", allowed):
         model_cfg = models.get("esm_if1", {})
@@ -71,6 +73,7 @@ def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: 
             device=device,
             model_location=_as_path(base_dir, model_cfg.get("model_location")),
             chain_id=model_cfg.get("chain_id"),
+            pdb_list=pdb_list,
         )
     if pdb_dir and models.get("proteinmpnn", {}).get("enabled", True) and _allowed("proteinmpnn", allowed):
         model_cfg = models.get("proteinmpnn", {})
@@ -79,7 +82,20 @@ def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: 
             output_dir=str(output_root / "protein_structure" / "proteinmpnn"),
             device=device,
             model_weights=_as_path(base_dir, model_cfg.get("model_weights", "weights/ProteinMPNN_weights/v_48_020.pt")),
+            model_weights_ca_only=_as_path(base_dir, model_cfg.get("model_weights_ca_only"))
+            if model_cfg.get("model_weights_ca_only")
+            else None,
             ca_only=bool(model_cfg.get("ca_only", False)),
+            pdb_list=pdb_list,
+        )
+    if fasta and models.get("protbert", {}).get("enabled", True) and _allowed("protbert", allowed):
+        model_cfg = models.get("protbert", {})
+        extractors.extract_protbert(
+            fasta_path=fasta,
+            output_dir=str(output_root / "protein_structure" / "protbert"),
+            device=device,
+            model_dir=_as_path(base_dir, model_cfg.get("model_dir", "weights/ProtBert_weights")),
+            batch_size=model_cfg.get("batch_size", 1),
         )
     if pdb_dir and models.get("protrek", {}).get("enabled", False) and _allowed("protrek", allowed):
         model_cfg = models.get("protrek", {})
@@ -95,6 +111,7 @@ def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: 
             foldseek_bin=_as_path(base_dir, model_cfg.get("foldseek_bin")),
             batch_size=int(model_cfg.get("batch_size", 32)),
             chain_id=model_cfg.get("chain_id"),
+            pdb_list=pdb_list,
         )
     if models.get("alphafold2", {}).get("enabled", False) and _allowed("alphafold2", allowed):
         model_cfg = models.get("alphafold2", {})
@@ -216,13 +233,28 @@ def main() -> None:
         csv_path = _as_path(base_dir, ds_cfg.get("csv_path"))
         if csv_path:
             inputs_dir = Path(output_root) / "inputs"
+            pdb_list_path = ds_cfg.get("pdb_list_path")
+            pdb_list_resolved = _as_path(base_dir, pdb_list_path) if pdb_list_path else None
             fasta_paths = build_dataset_fastas(
                 csv_path=csv_path,
                 output_dir=str(inputs_dir),
                 id_col=ds_cfg.get("id_col", "PDB"),
                 protein_seq_col=ds_cfg.get("protein_seq_col", "Protein sequences"),
                 rna_seq_col=ds_cfg.get("rna_seq_col", "RNA sequences"),
+                protein_chain_col=ds_cfg.get("protein_chain_col", "Protein chains"),
+                rna_chain_col=ds_cfg.get("rna_chain_col", "RNA chains"),
+                pdb_list_path=pdb_list_resolved,
             )
+            pdb_dir = ds_cfg.get("pdb_dir")
+            if pdb_dir:
+                pdb_info = build_dataset_pdb_list(
+                    csv_path=csv_path,
+                    pdb_dir=_as_path(base_dir, pdb_dir),
+                    id_col=ds_cfg.get("id_col", "PDB"),
+                    protein_chain_col=ds_cfg.get("protein_chain_col", "Protein chains"),
+                    rna_chain_col=ds_cfg.get("rna_chain_col", "RNA chains"),
+                    pdb_list_path=pdb_list_resolved,
+                )
             cfg.setdefault("protein_sequence", {})
             cfg.setdefault("rna_sequence", {})
             cfg.setdefault("rna_structure", {})
@@ -235,6 +267,10 @@ def main() -> None:
                 cfg["rna_structure"]["fasta"] = fasta_paths["rna_fasta"]
             if not cfg["protein_structure"].get("pdb_dir"):
                 cfg["protein_structure"]["pdb_dir"] = _as_path(base_dir, ds_cfg.get("pdb_dir"))
+            if not cfg["protein_structure"].get("fasta"):
+                cfg["protein_structure"]["fasta"] = fasta_paths["protein_fasta"]
+            if pdb_dir and not cfg["protein_structure"].get("pdb_list"):
+                cfg["protein_structure"]["pdb_list"] = pdb_info["pdb_files"]
             models_cfg = cfg["protein_structure"].setdefault("models", {})
             if "alphafold2" in models_cfg:
                 if not models_cfg["alphafold2"].get("fasta"):
@@ -245,8 +281,13 @@ def main() -> None:
                     rna_struct_models["rhofold"]["fasta"] = fasta_paths["rna_single_dir"]
             rna_models = cfg["rna_sequence"].setdefault("models", {})
             if "rna_msm" in rna_models:
-                if not rna_models["rna_msm"].get("msa_list"):
-                    rna_models["rna_msm"]["msa_list"] = fasta_paths["rna_msm_ids"]
+                msa_list_path = rna_models["rna_msm"].get("msa_list")
+                if not msa_list_path:
+                    rna_models["rna_msm"]["msa_list"] = fasta_paths["rna_msm_ids_unique"]
+                else:
+                    msa_list_resolved = Path(_as_path(base_dir, msa_list_path))
+                    if not msa_list_resolved.exists():
+                        rna_models["rna_msm"]["msa_list"] = fasta_paths["rna_msm_ids_unique"]
 
     if "protein_sequence" in cfg:
         run_protein_sequence(cfg["protein_sequence"], base_dir, output_root, device, allowed=selected)

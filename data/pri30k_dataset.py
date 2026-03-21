@@ -96,6 +96,8 @@ class PRI30kDataset(Dataset):
             }
             
             cplx.update(item)
+            cplx["prot_chain_ids"] = prot_chains
+            cplx["rna_chain_ids"] = na_chains
             if self.diskcache is not None:
                 for key in cplx:
                     if isinstance(cplx[key], torch.Tensor):
@@ -103,7 +105,13 @@ class PRI30kDataset(Dataset):
                 self.diskcache[structure_id] = cplx
             return cplx
         else:
-            return self.diskcache[structure_id]
+            data = self.diskcache[structure_id]
+            # diskcache may contain old entries without these keys; reconstruct from csv row
+            if "prot_chain_ids" not in data:
+                data["prot_chain_ids"] = prot_chains
+            if "rna_chain_ids" not in data:
+                data["rna_chain_ids"] = na_chains
+            return data
 
     def __len__(self):
         return len(self.df)
@@ -123,9 +131,10 @@ DEFAULT_PAD_VALUES = {
 }
 
 class PRI30kStructCollate(object):
-    def __init__(self, strategy='separate', length_ref_key='restype', pad_values=DEFAULT_PAD_VALUES, exclude_keys=EXCLUDE_KEYS, eight=True):
+    def __init__(self, strategy='separate', dataset_args=None, length_ref_key='restype', pad_values=DEFAULT_PAD_VALUES, exclude_keys=EXCLUDE_KEYS, eight=True):
         super().__init__()
         self.strategy = strategy
+        self.dataset_args = dataset_args
         self.length_ref_key = length_ref_key
         self.pad_values = pad_values
         self.exclude_keys = exclude_keys
@@ -185,7 +194,12 @@ class PRI30kStructCollate(object):
         keys_inter = self._get_common_keys(data_list)
         keys = []
         keys_not_pad = []
-        keys_ignore = ['prot_seqs', 'rna_seqs', 'max_prot_length', 'max_na_length', 'can_bind', 'ligand_id', 'atom_min_dist']
+        keys_ignore = [
+            'prot_seqs', 'rna_seqs',
+            'prot_chain_ids', 'rna_chain_ids',
+            'max_prot_length', 'max_na_length',
+            'can_bind', 'ligand_id', 'atom_min_dist'
+        ]
         pad_2d = ['atom_min_dist']
         for key in keys_inter:
             if key in keys_ignore:
@@ -286,4 +300,69 @@ class PRI30kStructCollate(object):
         ligand_ids =  [item['ligand_id'] for item in data_list]
         can_bind_info = [item['can_bind'] for item in data_list]
         batch['clip_label'] = self.gen_clip_label(ligand_ids, can_bind_info)
+
+        use_offline = False
+        offline_root = None
+        if self.dataset_args is not None:
+            use_offline = bool(getattr(self.dataset_args, "use_offline_embeddings", False))
+            offline_root = getattr(self.dataset_args, "offline_embedding_root", None)
+
+        if use_offline:
+            if offline_root is None:
+                raise ValueError("use_offline_embeddings=True but dataset_args.offline_embedding_root is not set")
+            from utils.offline_embeddings import OfflineEmbeddingSpec, load_offline_token_embeddings
+
+            spec = OfflineEmbeddingSpec(root=offline_root)
+            max_prot_len = int(prot_batch.shape[1])
+            max_rna_len = int(na_batch.shape[1])
+
+            def _pad_into_token_space(x_residue, max_len):
+                L = int(x_residue.shape[0])
+                out = x_residue.new_zeros((max_len, int(x_residue.shape[1])))
+                end = min(L, max_len - 2)
+                if end > 0:
+                    out[1:1 + end] = x_residue[:end]
+                return out
+
+            offline = {
+                "prot_seq": {m: [] for m in spec.protein_sequence_models},
+                "prot_struct": {m: [] for m in spec.protein_structure_models},
+                "rna_seq": {m: [] for m in spec.rna_sequence_models},
+                "rna_struct": {m: [] for m in spec.rna_structure_models},
+            }
+
+            for item in data_list:
+                pdb_id = item["ligand_id"].split("_")[0]
+                prot_chain_ids = item.get("prot_chain_ids", [])
+                rna_chain_ids = item.get("rna_chain_ids", [])
+
+                for chain_id in prot_chain_ids:
+                    for m in spec.protein_sequence_models:
+                        p = spec.file_path("protein_sequence", m, pdb_id, "prot", chain_id)
+                        offline["prot_seq"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_prot_len))
+                    for m in spec.protein_structure_models:
+                        p = spec.file_path("protein_structure", m, pdb_id, "prot", chain_id)
+                        offline["prot_struct"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_prot_len))
+
+                for chain_id in rna_chain_ids:
+                    for m in spec.rna_sequence_models:
+                        p = spec.file_path("rna_sequence", m, pdb_id, "rna", chain_id)
+                        offline["rna_seq"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_rna_len))
+                    for m in spec.rna_structure_models:
+                        p = spec.file_path("rna_structure", m, pdb_id, "rna", chain_id)
+                        offline["rna_struct"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_rna_len))
+
+            for group in offline:
+                for m in offline[group]:
+                    if len(offline[group][m]) == 0:
+                        raise RuntimeError(
+                            "Offline embedding list is empty for group='{}' model='{}'. "
+                            "Likely missing prot_chain_ids/rna_chain_ids in cached samples, or wrong offline_embedding_root."
+                            .format(group, m)
+                        )
+                    offline[group][m] = torch.stack(offline[group][m], dim=0)
+
+            batch["use_offline_embeddings"] = True
+            batch["offline_embeddings"] = offline
+
         return batch

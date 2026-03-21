@@ -78,7 +78,7 @@ class DataModule(pl.LightningDataModule):
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
                 persistent_workers=self.num_workers > 0,
-                collate_fn=collate(strategy=self.strategy),
+                collate_fn=collate(strategy=self.strategy, dataset_args=self.dataset_args),
             )
         else:
             return GraphLoader(
@@ -100,7 +100,7 @@ class DataModule(pl.LightningDataModule):
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
                 persistent_workers=self.num_workers > 0,
-                collate_fn=collate(strategy=self.strategy),
+                collate_fn=collate(strategy=self.strategy, dataset_args=self.dataset_args),
             )
         else:
             return GraphLoader(
@@ -123,7 +123,7 @@ class DataModule(pl.LightningDataModule):
                 num_workers=self.num_workers,
                 pin_memory=self.pin_memory,
                 persistent_workers=self.num_workers > 0,
-                collate_fn=collate(strategy=self.strategy),
+                collate_fn=collate(strategy=self.strategy, dataset_args=self.dataset_args),
             )
         else:
             return GraphLoader(

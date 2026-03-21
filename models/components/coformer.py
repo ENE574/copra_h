@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from models.components.attention import MultiHeadSelfAttention, FlashMultiHeadSelfAttention
+from models.components.csan_attention import CSANMultiHeadSelfAttention
 
 
 from models.components.rope import RotaryPositionEmbedding
@@ -36,14 +37,41 @@ class SwiGLU(nn.Module):
 
 
 class CoFormer(nn.Module):
-    def __init__(self, embed_dim, pair_dim, num_blocks, num_heads, use_rot_emb=True, attn_qkv_bias=False, transition_dropout=0.0, attention_dropout=0.0, residual_dropout=0.0, transition_factor=4, use_flash_attn=False):
+    def __init__(
+        self,
+        embed_dim,
+        pair_dim,
+        num_blocks,
+        num_heads,
+        use_rot_emb=True,
+        attn_qkv_bias=False,
+        transition_dropout=0.0,
+        attention_dropout=0.0,
+        residual_dropout=0.0,
+        transition_factor=4,
+        use_flash_attn=False,
+        attention_type="coformer",
+    ):
         super().__init__()
 
         self.use_flash_attn = use_flash_attn
 
         self.blocks = nn.ModuleList(
             [
-                TransformerBlock(embed_dim, pair_dim, num_heads, use_rot_emb, attn_qkv_bias, transition_dropout, attention_dropout, residual_dropout, transition_factor, use_flash_attn) for _ in range(num_blocks)
+                TransformerBlock(
+                    embed_dim,
+                    pair_dim,
+                    num_heads,
+                    use_rot_emb,
+                    attn_qkv_bias,
+                    transition_dropout,
+                    attention_dropout,
+                    residual_dropout,
+                    transition_factor,
+                    use_flash_attn,
+                    attention_type=attention_type,
+                )
+                for _ in range(num_blocks)
             ]
         )
 
@@ -82,13 +110,43 @@ class CoFormer(nn.Module):
         return x, struct_embed, attn_weights
 
 class TransformerBlock(nn.Module):
-    def __init__(self, embed_dim, pair_dim, num_heads, use_rot_emb=True, attn_qkv_bias=False, transition_dropout=0.0, attention_dropout=0.0, residual_dropout=0.0, transition_factor=4, use_flash_attn=False):
+    def __init__(
+        self,
+        embed_dim,
+        pair_dim,
+        num_heads,
+        use_rot_emb=True,
+        attn_qkv_bias=False,
+        transition_dropout=0.0,
+        attention_dropout=0.0,
+        residual_dropout=0.0,
+        transition_factor=4,
+        use_flash_attn=False,
+        attention_type="coformer",
+    ):
         super().__init__()
         
         self.use_flash_attn = use_flash_attn
 
-        if use_flash_attn:
-            self.mh_attn = FlashMultiHeadSelfAttention(embed_dim, num_heads, attention_dropout, causal=False, use_rot_emb=use_rot_emb, bias=attn_qkv_bias)
+        if attention_type == "csan":
+            self.mh_attn = CSANMultiHeadSelfAttention(
+                embed_dim,
+                pair_dim,
+                num_heads,
+                attention_dropout=attention_dropout,
+                use_rot_emb=use_rot_emb,
+                bias=attn_qkv_bias,
+                attn_qkv_bias=attn_qkv_bias,
+            )
+        elif use_flash_attn:
+            self.mh_attn = FlashMultiHeadSelfAttention(
+                embed_dim,
+                num_heads,
+                attention_dropout,
+                causal=False,
+                use_rot_emb=use_rot_emb,
+                bias=attn_qkv_bias,
+            )
         else:
             self.mh_attn = MultiHeadSelfAttention(embed_dim, pair_dim, num_heads, attention_dropout, use_rot_emb, attn_qkv_bias)
         

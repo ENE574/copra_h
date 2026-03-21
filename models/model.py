@@ -1,7 +1,5 @@
 import torch.nn as nn
 import torch
-import math
-from pathlib import Path
 import esm
 from rinalmo.config import model_config
 from rinalmo.model.model import RiNALMo
@@ -18,125 +16,6 @@ from peft import (
     get_peft_model,
 )
 R = ModelRegister()
-
-
-class ModelDimAttention(nn.Module):
-    def __init__(self, embed_dim, num_models, gate_lambda=1.0):
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.num_models = num_models
-        self.gate_lambda = gate_lambda
-        self.join_mlp = nn.Sequential(
-            nn.Linear(embed_dim * num_models + num_models, embed_dim),
-            nn.ReLU(),
-            nn.Linear(embed_dim, embed_dim),
-        )
-        self.join_norm = nn.LayerNorm(embed_dim)
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.ModuleList([nn.Linear(embed_dim, embed_dim) for _ in range(num_models)])
-        self.v_proj = nn.ModuleList([nn.Linear(embed_dim, embed_dim) for _ in range(num_models)])
-        self.gate_proj = nn.Linear(embed_dim, embed_dim)
-
-    def forward(self, embeddings, model_mask=None, token_mask=None):
-        # embeddings: list of [B, L, D], length = num_models
-        if len(embeddings) != self.num_models:
-            raise ValueError("ModelDimAttention expects {} embeddings".format(self.num_models))
-        base = embeddings[0]
-        batch_size, seq_len, _ = base.shape
-        device = base.device
-
-        if model_mask is None:
-            model_mask = torch.ones((batch_size, self.num_models), device=device)
-        if model_mask.dim() == 2:
-            model_mask = model_mask[:, None, :].expand(batch_size, seq_len, self.num_models)
-        model_mask = model_mask.float()
-
-        masked_embs = []
-        for idx, emb in enumerate(embeddings):
-            mask = model_mask[:, :, idx].unsqueeze(-1)
-            masked_embs.append(emb * mask)
-
-        join_input = torch.cat(masked_embs + [model_mask], dim=-1)
-        joint = self.join_mlp(join_input)
-        joint = self.join_norm(joint)
-        q = self.q_proj(joint)
-
-        logits = []
-        values = []
-        scale = 1.0 / math.sqrt(self.embed_dim)
-        for idx, emb in enumerate(masked_embs):
-            k = self.k_proj[idx](emb)
-            v = self.v_proj[idx](emb)
-            values.append(v)
-            logits.append((q * k).sum(dim=-1) * scale)
-        logits = torch.stack(logits, dim=-1)
-        logits = logits.masked_fill(model_mask == 0, -1e9)
-        attn = torch.softmax(logits, dim=-1)
-        attn = attn * model_mask
-        denom = attn.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-        attn = attn / denom
-
-        output = torch.zeros_like(values[0])
-        for idx, v in enumerate(values):
-            output = output + v * attn[:, :, idx].unsqueeze(-1)
-
-        gate = torch.sigmoid(self.gate_proj(joint))
-        output = output * (self.gate_lambda * gate)
-        if token_mask is not None:
-            output = output * token_mask.unsqueeze(-1).float()
-        return output
-
-
-class GatedCrossAttention(nn.Module):
-    def __init__(self, embed_dim, num_heads, attention_dropout=0.0):
-        super().__init__()
-        if embed_dim % num_heads != 0:
-            raise ValueError("embed_dim must be divisible by num_heads")
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.head_dim = embed_dim // num_heads
-        self.scale = 1.0 / math.sqrt(self.head_dim)
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, embed_dim)
-        self.v_proj = nn.Linear(embed_dim, embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
-        self.gate_proj = nn.Linear(embed_dim, embed_dim)
-        self.q_norm = nn.LayerNorm(embed_dim)
-        self.attn_dropout = nn.Dropout(p=attention_dropout)
-
-    def forward(self, query, key, value, key_mask=None, query_mask=None, bias=None, gate_lambda=1.0):
-        # query: [B, Lq, D], key/value: [B, Lk, D]
-        q_norm = self.q_norm(query)
-        q = self.q_proj(q_norm)
-        k = self.k_proj(key)
-        v = self.v_proj(value)
-
-        bsz, lq, _ = q.shape
-        lk = k.shape[1]
-        q = q.view(bsz, lq, self.num_heads, self.head_dim).transpose(1, 2)
-        k = k.view(bsz, lk, self.num_heads, self.head_dim).transpose(1, 2)
-        v = v.view(bsz, lk, self.num_heads, self.head_dim).transpose(1, 2)
-
-        scores = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-        if bias is not None:
-            if bias.dim() == 3:
-                scores = scores + bias[:, None, :, :]
-            else:
-                scores = scores + bias
-        if key_mask is not None:
-            scores = scores.masked_fill(~key_mask[:, None, None, :], -1e9)
-
-        attn = torch.softmax(scores, dim=-1)
-        attn = self.attn_dropout(attn)
-        out = torch.matmul(attn, v)
-        out = out.transpose(1, 2).contiguous().view(bsz, lq, self.embed_dim)
-        out = self.out_proj(out)
-
-        gate = torch.sigmoid(self.gate_proj(q_norm))
-        out = out * (gate_lambda * gate)
-        if query_mask is not None:
-            out = out * query_mask.unsqueeze(-1).float()
-        return out
 
 def load_esm(esm_type):
     if esm_type == '650M':
@@ -224,52 +103,12 @@ def segment_cat_pad(prot_embedding, prot_chains, prot_mask, na_embedding, na_cha
     # print("Result shape:", result)
     return result, masks
 
-def merge_chains(embeddings, mask, chain_counts):
-    lengths = []
-    chunks = []
-    cursor = 0
-    for count in chain_counts:
-        start = cursor
-        end = cursor + count
-        cursor = end
-        if count == 0:
-            lengths.append(0)
-            chunks.append(embeddings.new_zeros((0, embeddings.shape[-1])))
-            continue
-        item_embed = embeddings[start:end].reshape(-1, embeddings.shape[-1])
-        item_mask = mask[start:end].reshape(-1)
-        indices = torch.nonzero(item_mask).flatten()
-        selected = torch.index_select(item_embed, 0, indices)
-        lengths.append(selected.shape[0])
-        chunks.append(selected)
-    max_len = max(lengths) if lengths else 0
-    out = []
-    masks = []
-    for selected, length in zip(chunks, lengths):
-        padded = F.pad(selected, (0, 0, 0, max_len - length), 'constant', 0)
-        out.append(padded)
-        mask_row = torch.zeros((max_len,), device=selected.device)
-        if length > 0:
-            mask_row[:length] = 1
-        masks.append(mask_row)
-    if not out:
-        return embeddings.new_zeros((0, 0, embeddings.shape[-1])), mask.new_zeros((0, 0)).bool()
-    out = torch.stack(out, dim=0)
-    masks = torch.stack(masks, dim=0).bool()
-    return out, masks
-
 @R.register('copra')
 class ESM2RiNALMo(nn.Module):
     def __init__(self, 
-                 rinalmo_weights='./weights/rinalmo_weights/rinalmo_giga_pretrained.pt',
+                 rinalmo_weights='./weights/rinalmo_giga_pretrained.pt',
                  esm_type='650M',
                  rinalmo_type='650M',
-                 seq_prot_models=None,
-                 seq_rna_models=None,
-                 str_prot_models=None,
-                 str_rna_models=None,
-                 embedding_root: str = "./outputs/feature_extraction",
-                 embedding_dims: dict = None,
                  pooling='mean',
                  output_dim=1,
                  pair_dim=320,
@@ -279,136 +118,31 @@ class ESM2RiNALMo(nn.Module):
                  lora_alpha=32,
                  representation_layer=33,
                  dist_dim=40,
+                 use_offline_embeddings=False,
+                 offline_dim=1280,
                  **kwargs
                  ):
         super(ESM2RiNALMo, self).__init__()
-        self.esm, esm_feat_size = load_esm(esm_type)
-        self.rinalmo, rinalmo_feat_size = load_rinalmo(rinalmo_weights, rinalmo_type)
+        self.use_offline_embeddings = use_offline_embeddings
+        if not self.use_offline_embeddings:
+            self.esm, esm_feat_size = load_esm(esm_type)
+            self.rinalmo, rinalmo_feat_size = load_rinalmo(rinalmo_weights, rinalmo_type)
+        else:
+            self.esm = None
+            self.rinalmo = None
+            esm_feat_size = None
+            rinalmo_feat_size = None
         self.pair_encoder = ResiduePairEncoder(pair_dim, max_num_atoms=4)  # N, CA, C, O,
         self.c_former = CoFormer(**kwargs['coformer'])
         self.representation_layer = representation_layer
         self.proj = 0
-        if esm_feat_size != rinalmo_feat_size:
+        if not self.use_offline_embeddings and esm_feat_size != rinalmo_feat_size:
             self.proj = 1
-            self.project_feat= nn.Linear(esm_feat_size, rinalmo_feat_size)
+            self.project_feat = nn.Linear(esm_feat_size, rinalmo_feat_size)
         self.complex_dim = kwargs['coformer']['embed_dim']
-        self.feat_size = rinalmo_feat_size
-        self.pair_dim = pair_dim
+        self.feat_size = offline_dim if self.use_offline_embeddings else rinalmo_feat_size
         self.proj_cplx= nn.Linear(self.feat_size, self.complex_dim)
-        def _ensure_list(value, fallback):
-            if value is None:
-                return list(fallback)
-            if isinstance(value, str):
-                return [value]
-            return list(value)
-
-        self.seq_prot_models = _ensure_list(seq_prot_models, ["esm2", "prott5", "saprot"])
-        self.seq_rna_models = _ensure_list(seq_rna_models, ["rinalmo", "rna_msm", "rna_fm"])
-        self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1", "protrek", "protbert"])
-        self.str_rna_models = _ensure_list(str_rna_models, ["rna_ernie", "rnabert", "rhofold"])
-
-        def _infer_dim(base_dir: Path, group: str, name: str) -> int:
-            search_dir = base_dir / group / name
-            if not search_dir.exists():
-                raise FileNotFoundError(f"Embedding dir not found: {search_dir}")
-            candidates = sorted(search_dir.glob("*.pt"))
-            if not candidates:
-                raise FileNotFoundError(f"No embeddings found in: {search_dir}")
-            payload = torch.load(candidates[0], map_location="cpu")
-            token_embeddings = payload.get("token_embeddings")
-            if token_embeddings is None:
-                raise ValueError(f"Missing token_embeddings in {candidates[0]}")
-            return int(token_embeddings.shape[-1])
-
-        emb_root = Path(embedding_root)
-        embedding_dims = embedding_dims or {}
-
-        def _get_dim(group: str, name: str) -> int:
-            if name in embedding_dims:
-                return int(embedding_dims[name])
-            return _infer_dim(emb_root, group, name)
-
-        self.seq_prot_proj = nn.ModuleDict({
-            name: nn.Linear(_get_dim("protein_sequence", name), self.complex_dim)
-            for name in self.seq_prot_models
-        })
-        self.seq_rna_proj = nn.ModuleDict({
-            name: nn.Linear(_get_dim("rna_sequence", name), self.complex_dim)
-            for name in self.seq_rna_models
-        })
-        self.str_prot_proj = nn.ModuleDict({
-            name: nn.Linear(_get_dim("protein_structure", name), self.complex_dim)
-            for name in self.str_prot_models
-        })
-        self.str_rna_proj = nn.ModuleDict({
-            name: nn.Linear(_get_dim("rna_structure", name), self.complex_dim)
-            for name in self.str_rna_models
-        })
-
-        self.seq_prot_norm = nn.ModuleDict({name: nn.LayerNorm(self.complex_dim) for name in self.seq_prot_models})
-        self.seq_rna_norm = nn.ModuleDict({name: nn.LayerNorm(self.complex_dim) for name in self.seq_rna_models})
-        self.str_prot_norm = nn.ModuleDict({name: nn.LayerNorm(self.complex_dim) for name in self.str_prot_models})
-        self.str_rna_norm = nn.ModuleDict({name: nn.LayerNorm(self.complex_dim) for name in self.str_rna_models})
-
-        self.use_joint_query_pipeline = bool(kwargs.get("joint_query_pipeline", True))
-        self.gate_lambda_group = float(kwargs.get("gate_lambda_group", 1.0))
-        self.gate_lambda_intra = float(kwargs.get("gate_lambda_intra", 0.5))
-        self.gate_lambda_inter = float(kwargs.get("gate_lambda_inter", 1.0))
-        self.struct_bias_dim = int(kwargs.get("struct_bias_dim", self.pair_dim))
-        num_heads = int(kwargs["coformer"]["num_heads"])
-        attention_dropout = float(kwargs["coformer"].get("attention_dropout", 0.0))
-
-        self.seq_prot_fuser = ModelDimAttention(self.complex_dim, len(self.seq_prot_models), gate_lambda=self.gate_lambda_group)
-        self.seq_rna_fuser = ModelDimAttention(self.complex_dim, len(self.seq_rna_models), gate_lambda=self.gate_lambda_group)
-        self.str_prot_fuser = ModelDimAttention(self.complex_dim, len(self.str_prot_models), gate_lambda=self.gate_lambda_group)
-        self.str_rna_fuser = ModelDimAttention(self.complex_dim, len(self.str_rna_models), gate_lambda=self.gate_lambda_group)
-
-        self.prot_t2s_attn = GatedCrossAttention(self.complex_dim, num_heads, attention_dropout=attention_dropout)
-        self.prot_s2t_attn = GatedCrossAttention(self.complex_dim, num_heads, attention_dropout=attention_dropout)
-        self.rna_t2s_attn = GatedCrossAttention(self.complex_dim, num_heads, attention_dropout=attention_dropout)
-        self.rna_s2t_attn = GatedCrossAttention(self.complex_dim, num_heads, attention_dropout=attention_dropout)
-        self.inter_p2r_attn = GatedCrossAttention(self.complex_dim, num_heads, attention_dropout=attention_dropout)
-        self.inter_r2p_attn = GatedCrossAttention(self.complex_dim, num_heads, attention_dropout=attention_dropout)
-
-        self.prot_struct_gate = nn.Sequential(
-            nn.Linear(self.complex_dim * 2, self.complex_dim),
-            nn.ReLU(),
-            nn.Linear(self.complex_dim, 1),
-        )
-        self.rna_struct_gate = nn.Sequential(
-            nn.Linear(self.complex_dim * 2, self.complex_dim),
-            nn.ReLU(),
-            nn.Linear(self.complex_dim, 1),
-        )
-        self.gamma_prot = nn.Parameter(torch.tensor(1.0))
-        self.gamma_rna = nn.Parameter(torch.tensor(1.0))
-        self.struct_bias_left = nn.Linear(self.complex_dim, self.struct_bias_dim)
-        self.struct_bias_right = nn.Linear(self.complex_dim, self.struct_bias_dim)
-
-        self.seq_prot_gate = nn.Sequential(
-            nn.Linear(self.complex_dim * len(self.seq_prot_models), self.complex_dim),
-            nn.ReLU(),
-            nn.Linear(self.complex_dim, len(self.seq_prot_models)),
-        )
-        self.seq_rna_gate = nn.Sequential(
-            nn.Linear(self.complex_dim * len(self.seq_rna_models), self.complex_dim),
-            nn.ReLU(),
-            nn.Linear(self.complex_dim, len(self.seq_rna_models)),
-        )
-        self.str_prot_gate = nn.Sequential(
-            nn.Linear(self.complex_dim * len(self.str_prot_models), self.complex_dim),
-            nn.ReLU(),
-            nn.Linear(self.complex_dim, len(self.str_prot_models)),
-        )
-        self.str_rna_gate = nn.Sequential(
-            nn.Linear(self.complex_dim * len(self.str_rna_models), self.complex_dim),
-            nn.ReLU(),
-            nn.Linear(self.complex_dim, len(self.str_rna_models)),
-        )
-
-        self.z_left = nn.Linear(self.complex_dim, self.pair_dim)
-        self.z_right = nn.Linear(self.complex_dim, self.pair_dim)
-        if lora_tune:
+        if (not self.use_offline_embeddings) and lora_tune:
             import re
             pattern = r'\((\w+)\): Linear'
             rinalmo_linear_layers = re.findall(pattern, str(self.rinalmo.modules))
@@ -442,11 +176,62 @@ class ESM2RiNALMo(nn.Module):
             self.esm = get_peft_model(self.esm, esm_lora_config)
             print("Get ESM DONE!!!!!")
             self.esm.print_trainable_parameters()
-        elif fix_lms:
+        elif (not self.use_offline_embeddings) and fix_lms:
             for p in self.rinalmo.parameters():
                 p.requires_grad_(False)
             for p in self.esm.parameters():
                 p.requires_grad_(False)
+
+        # Offline embedding fusion modules (12 models, 4 groups) + interactions
+        if self.use_offline_embeddings:
+            # Per-model input dims
+            self._offline_dims = {
+                "prot_seq": {"esm2": 1280, "prott5": 1024, "saprot": 1280},
+                "prot_struct": {"esm_if1": 512, "protbert": 1024, "protrek": 1024},
+                "rna_seq": {"rinalmo": 1280, "rna_fm": 640, "rna_msm": 768},
+                "rna_struct": {"ERNIE-RNA": 768, "rhofold": 384, "rnabert": 120},
+            }
+
+            def _make_proj(d_in):
+                return nn.Linear(d_in, self.feat_size)
+
+            self.offline_proj = nn.ModuleDict()
+            for group, m2d in self._offline_dims.items():
+                for m, d_in in m2d.items():
+                    self.offline_proj["{}/{}".format(group, m)] = _make_proj(d_in)
+
+            self.offline_q_proj = nn.ModuleDict({
+                "prot_seq": nn.Linear(self.feat_size * 3, self.feat_size),
+                "prot_struct": nn.Linear(self.feat_size * 3, self.feat_size),
+                "rna_seq": nn.Linear(self.feat_size * 3, self.feat_size),
+                "rna_struct": nn.Linear(self.feat_size * 3, self.feat_size),
+            })
+            self.offline_k_proj = nn.ModuleDict({
+                "prot_seq": nn.Linear(self.feat_size, self.feat_size),
+                "prot_struct": nn.Linear(self.feat_size, self.feat_size),
+                "rna_seq": nn.Linear(self.feat_size, self.feat_size),
+                "rna_struct": nn.Linear(self.feat_size, self.feat_size),
+            })
+            self.offline_v_proj = nn.ModuleDict({
+                "prot_seq": nn.Linear(self.feat_size, self.feat_size),
+                "prot_struct": nn.Linear(self.feat_size, self.feat_size),
+                "rna_seq": nn.Linear(self.feat_size, self.feat_size),
+                "rna_struct": nn.Linear(self.feat_size, self.feat_size),
+            })
+            # Use the same head count as CoFormer when possible
+            self.offline_num_heads = int(kwargs["coformer"]["num_heads"])
+            self._head_dim = self.feat_size // self.offline_num_heads
+            assert self.feat_size % self.offline_num_heads == 0, "offline_dim must be divisible by coformer.num_heads"
+
+            # Entity-internal seq<->struct bidirectional cross-attention
+            self.prot_seq_to_struct = nn.MultiheadAttention(self.feat_size, self.offline_num_heads, batch_first=True)
+            self.prot_struct_to_seq = nn.MultiheadAttention(self.feat_size, self.offline_num_heads, batch_first=True)
+            self.rna_seq_to_struct = nn.MultiheadAttention(self.feat_size, self.offline_num_heads, batch_first=True)
+            self.rna_struct_to_seq = nn.MultiheadAttention(self.feat_size, self.offline_num_heads, batch_first=True)
+
+            # Cross-entity bidirectional attention: protein <-> RNA
+            self.prot_to_rna = nn.MultiheadAttention(self.feat_size, self.offline_num_heads, batch_first=True)
+            self.rna_to_prot = nn.MultiheadAttention(self.feat_size, self.offline_num_heads, batch_first=True)
                 
         self.pooling = pooling
         print("Pooling Strategy:", self.pooling)
@@ -470,6 +255,38 @@ class ESM2RiNALMo(nn.Module):
             nn.Linear(pair_dim, self.feat_size), nn.ReLU(),
             nn.Linear(self.feat_size, dist_dim)
         )
+
+    def _offline_group_fusion(self, group_name, x_list):
+        """
+        Group-wise fusion (3 models per group).
+        Q: joint from three embeddings (concat -> linear)
+        K/V: from three model representations.
+        Attention is over the 3 sources (model dimension) for each token.
+        Args:
+          x_list: list of 3 tensors, each [B, T, D_in] already in self.feat_size
+        Returns:
+          fused: [B, T, self.feat_size]
+        """
+        x_cat = torch.cat(x_list, dim=-1)  # [B,T,3D]
+        q = self.offline_q_proj[group_name](x_cat)  # [B,T,D]
+        # stack sources
+        k = torch.stack([self.offline_k_proj[group_name](x) for x in x_list], dim=2)  # [B,T,3,D]
+        v = torch.stack([self.offline_v_proj[group_name](x) for x in x_list], dim=2)  # [B,T,3,D]
+
+        B, T, S, D = k.shape
+        H = self.offline_num_heads
+        Dh = self._head_dim
+        qh = q.view(B, T, H, Dh)  # [B,T,H,Dh]
+        kh = k.view(B, T, S, H, Dh)  # [B,T,S,H,Dh]
+        vh = v.view(B, T, S, H, Dh)  # [B,T,S,H,Dh]
+
+        # scores: [B,T,H,S]
+        scores = (qh.unsqueeze(2) * kh).sum(-1) / (Dh ** 0.5)
+        attn = torch.softmax(scores, dim=-1)
+        # fused per head: [B,T,H,Dh]
+        fused_h = (attn.unsqueeze(-1) * vh).sum(dim=2)
+        fused = fused_h.reshape(B, T, D)
+        return fused
     
     def _forward(self, input, strategy='separate', need_mask=False):
         prot_input = input['prot']
@@ -479,124 +296,161 @@ class ESM2RiNALMo(nn.Module):
         na_chains = input['na_chains']
         na_mask = input['na_mask']
 
-        use_precomputed = bool(input.get('use_precomputed_embeddings', False))
-        if use_precomputed and 'seq_prot_embeddings' in input:
-            def _masked_mean(x, mask):
-                mask = mask.float()
-                denom = mask.sum(dim=1, keepdim=True).clamp_min(1.0)
-                return (x * mask.unsqueeze(-1)).sum(dim=1) / denom
+        if self.use_offline_embeddings or bool(input.get("use_offline_embeddings", False)):
+            offline = input["offline_embeddings"]
 
-            def _prep_group(emb_dict, models, proj, norm):
-                embeddings = []
-                for name in models:
-                    emb = emb_dict[name].to(prot_mask.device).float()
-                    emb = proj[name](emb)
-                    emb = norm[name](emb)
-                    embeddings.append(emb)
-                return embeddings
+            # Convert token-space offline embeddings -> residue-space per complex
+            # (strip CLS/EOS/PAD using masks, then concatenate chains inside each complex).
+            def _to_residue_per_complex(x_token, chain_counts, chain_mask):
+                out = []
+                lens = []
+                idx = 0
+                for n_chains in chain_counts:
+                    parts = []
+                    for _ in range(int(n_chains)):
+                        m = chain_mask[idx].bool()
+                        parts.append(x_token[idx][m])
+                        idx += 1
+                    if len(parts) == 1:
+                        x = parts[0]
+                    else:
+                        x = torch.cat(parts, dim=0)
+                    out.append(x)
+                    lens.append(int(x.shape[0]))
+                return out, lens
 
-            seq_prot = input['seq_prot_embeddings']
-            seq_rna = input['seq_rna_embeddings']
-            str_prot = input['str_prot_embeddings']
-            str_rna = input['str_rna_embeddings']
+            # residue-space lists (len = N_complex), each item [L_i, D_in]
+            prot_seq_list = {k: None for k in offline["prot_seq"].keys()}
+            prot_struct_list = {k: None for k in offline["prot_struct"].keys()}
+            rna_seq_list = {k: None for k in offline["rna_seq"].keys()}
+            rna_struct_list = {k: None for k in offline["rna_struct"].keys()}
 
-            seq_prot_embs = _prep_group(seq_prot, self.seq_prot_models, self.seq_prot_proj, self.seq_prot_norm)
-            seq_rna_embs = _prep_group(seq_rna, self.seq_rna_models, self.seq_rna_proj, self.seq_rna_norm)
-            str_prot_embs = _prep_group(str_prot, self.str_prot_models, self.str_prot_proj, self.str_prot_norm)
-            str_rna_embs = _prep_group(str_rna, self.str_rna_models, self.str_rna_proj, self.str_rna_norm)
+            for m in prot_seq_list:
+                prot_seq_list[m], prot_lens = _to_residue_per_complex(offline["prot_seq"][m], prot_chains, prot_mask)
+            for m in prot_struct_list:
+                prot_struct_list[m], _ = _to_residue_per_complex(offline["prot_struct"][m], prot_chains, prot_mask)
+            for m in rna_seq_list:
+                rna_seq_list[m], rna_lens = _to_residue_per_complex(offline["rna_seq"][m], na_chains, na_mask)
+            for m in rna_struct_list:
+                rna_struct_list[m], _ = _to_residue_per_complex(offline["rna_struct"][m], na_chains, na_mask)
 
-            S_prot = self.seq_prot_fuser(seq_prot_embs, token_mask=prot_mask)
-            S_rna = self.seq_rna_fuser(seq_rna_embs, token_mask=na_mask)
-            U_prot = self.str_prot_fuser(str_prot_embs, token_mask=prot_mask)
-            U_rna = self.str_rna_fuser(str_rna_embs, token_mask=na_mask)
+            # Pad residue-space to batch tensors for attention blocks
+            def _pad_list(xs, max_len):
+                B = len(xs)
+                D = int(xs[0].shape[-1]) if B > 0 else 0
+                out = xs[0].new_zeros((B, max_len, D))
+                pad_mask = torch.ones((B, max_len), device=out.device, dtype=torch.bool)  # True=ignore
+                for i, x in enumerate(xs):
+                    L = int(x.shape[0])
+                    if L > 0:
+                        out[i, :L] = x
+                        pad_mask[i, :L] = False
+                return out, pad_mask
 
-            prot_counts = [int(x) for x in prot_chains]
-            rna_counts = [int(x) for x in na_chains]
-            S_prot, prot_token_mask = merge_chains(S_prot, prot_mask, prot_counts)
-            U_prot, _ = merge_chains(U_prot, prot_mask, prot_counts)
-            S_rna, rna_token_mask = merge_chains(S_rna, na_mask, rna_counts)
-            U_rna, _ = merge_chains(U_rna, na_mask, rna_counts)
+            max_prot = max(prot_lens) if len(prot_lens) > 0 else 0
+            max_rna = max(rna_lens) if len(rna_lens) > 0 else 0
 
-            O_t2s = self.prot_t2s_attn(U_prot, S_prot, S_prot, key_mask=prot_token_mask, query_mask=prot_token_mask, gate_lambda=self.gate_lambda_intra)
-            O_s2t = self.prot_s2t_attn(S_prot, U_prot, U_prot, key_mask=prot_token_mask, query_mask=prot_token_mask, gate_lambda=self.gate_lambda_intra)
-            prot_t = U_prot + O_t2s
-            prot_s = S_prot + O_s2t
-            prot_alpha = torch.sigmoid(self.prot_struct_gate(torch.cat([
-                _masked_mean(S_prot, prot_token_mask),
-                _masked_mean(U_prot, prot_token_mask)
-            ], dim=-1)))
-            prot_alpha = prot_alpha.unsqueeze(-1).unsqueeze(-1)
-            H_prot = prot_alpha * prot_t + (1.0 - prot_alpha) * prot_s
+            def _proj(group, model, x):
+                return self.offline_proj["{}/{}".format(group, model)](x)
 
-            O_t2s_rna = self.rna_t2s_attn(U_rna, S_rna, S_rna, key_mask=rna_token_mask, query_mask=rna_token_mask, gate_lambda=self.gate_lambda_intra)
-            O_s2t_rna = self.rna_s2t_attn(S_rna, U_rna, U_rna, key_mask=rna_token_mask, query_mask=rna_token_mask, gate_lambda=self.gate_lambda_intra)
-            rna_t = U_rna + O_t2s_rna
-            rna_s = S_rna + O_s2t_rna
-            rna_alpha = torch.sigmoid(self.rna_struct_gate(torch.cat([
-                _masked_mean(S_rna, rna_token_mask),
-                _masked_mean(U_rna, rna_token_mask)
-            ], dim=-1)))
-            rna_alpha = rna_alpha.unsqueeze(-1).unsqueeze(-1)
-            H_rna = rna_alpha * rna_t + (1.0 - rna_alpha) * rna_s
+            # Prepare 3 projected tensors per group for fusion
+            prot_seq_3 = []
+            for m in ["esm2", "prott5", "saprot"]:
+                t, _ = _pad_list(prot_seq_list[m], max_prot)
+                prot_seq_3.append(_proj("prot_seq", m, t))
+            prot_struct_3 = []
+            for m in ["esm_if1", "protbert", "protrek"]:
+                t, _ = _pad_list(prot_struct_list[m], max_prot)
+                prot_struct_3.append(_proj("prot_struct", m, t))
+            rna_seq_3 = []
+            for m in ["rinalmo", "rna_fm", "rna_msm"]:
+                t, _ = _pad_list(rna_seq_list[m], max_rna)
+                rna_seq_3.append(_proj("rna_seq", m, t))
+            rna_struct_3 = []
+            for m in ["ERNIE-RNA", "rhofold", "rnabert"]:
+                t, _ = _pad_list(rna_struct_list[m], max_rna)
+                rna_struct_3.append(_proj("rna_struct", m, t))
 
-            U_p = self.struct_bias_left(U_prot)
-            U_r = self.struct_bias_right(U_rna)
-            z_bias = torch.matmul(U_p, U_r.transpose(1, 2)) * (1.0 / math.sqrt(self.struct_bias_dim))
-            pair_mask = prot_token_mask[:, :, None] & rna_token_mask[:, None, :]
-            z_bias = z_bias * pair_mask.float()
+            # Padding masks (same across models within an entity)
+            _, prot_pad_mask = _pad_list(prot_seq_list["esm2"], max_prot)
+            _, rna_pad_mask = _pad_list(rna_seq_list["rinalmo"], max_rna)
 
-            prot_base = H_prot
-            rna_base = H_rna
-            O_p2r = self.inter_p2r_attn(prot_base, rna_base, rna_base, key_mask=rna_token_mask, query_mask=prot_token_mask, bias=z_bias, gate_lambda=self.gate_lambda_inter)
-            O_r2p = self.inter_r2p_attn(rna_base, prot_base, prot_base, key_mask=prot_token_mask, query_mask=rna_token_mask, bias=z_bias.transpose(1, 2), gate_lambda=self.gate_lambda_inter)
-            H_prot = prot_base + self.gamma_prot * O_p2r
-            H_rna = rna_base + self.gamma_rna * O_r2p
+            # 1) within-group fusion
+            prot_seq = self._offline_group_fusion("prot_seq", prot_seq_3)
+            prot_struct = self._offline_group_fusion("prot_struct", prot_struct_3)
+            rna_seq = self._offline_group_fusion("rna_seq", rna_seq_3)
+            rna_struct = self._offline_group_fusion("rna_struct", rna_struct_3)
 
+            # 2) within-entity bidirectional interaction
+            prot_struct2, _ = self.prot_seq_to_struct(query=prot_struct, key=prot_seq, value=prot_seq, key_padding_mask=prot_pad_mask)
+            prot_seq2, _ = self.prot_struct_to_seq(query=prot_seq, key=prot_struct, value=prot_struct, key_padding_mask=prot_pad_mask)
+            rna_struct2, _ = self.rna_seq_to_struct(query=rna_struct, key=rna_seq, value=rna_seq, key_padding_mask=rna_pad_mask)
+            rna_seq2, _ = self.rna_struct_to_seq(query=rna_seq, key=rna_struct, value=rna_struct, key_padding_mask=rna_pad_mask)
+            prot_entity = prot_seq2 + prot_struct2
+            rna_entity = rna_seq2 + rna_struct2
+
+            # 3) cross-entity bidirectional interaction (per complex; batch size is N_complex)
+            prot_final, _ = self.prot_to_rna(query=prot_entity, key=rna_entity, value=rna_entity, key_padding_mask=rna_pad_mask)
+            rna_final, _ = self.rna_to_prot(query=rna_entity, key=prot_entity, value=prot_entity, key_padding_mask=prot_pad_mask)
+
+            # Build residue-space complex embedding: [prot residues][rna residues], padded to max_len from structure batch
             max_len = input['pos_atoms'].shape[1]
-            patch_idx = input.get('patch_idx', None)
-            out_embedding, masks = cat_pad(H_prot, prot_token_mask, H_rna, rna_token_mask, max_len, patch_idx)
-            assert out_embedding.shape[0] == input['size']
+            out_embedding = prot_final.new_zeros((len(prot_lens), max_len, self.feat_size))
+            masks = torch.zeros((len(prot_lens), max_len), device=out_embedding.device, dtype=torch.bool)
+            for i, (Lp, Lr) in enumerate(zip(prot_lens, rna_lens)):
+                combined = torch.cat([prot_final[i, :Lp], rna_final[i, :Lr]], dim=0)  # [Lp+Lr, D]
+
+                # If structure transform selected a patch, apply the same indices to offline embeddings.
+                if "patch_idx" in input:
+                    # patch_idx is per-complex indices into the full complex sequence (protein first, RNA second)
+                    idx = input["patch_idx"][i]
+                    idx = idx[idx >= 0].long()
+                    combined = torch.index_select(combined, 0, idx)
+
+                # Finally fit into max_len (patch_size) with truncation if needed
+                Lc = int(min(combined.shape[0], max_len))
+                if Lc > 0:
+                    out_embedding[i, :Lc] = combined[:Lc]
+                    masks[i, :Lc] = True
+
+            out_embedding = self.proj_cplx(out_embedding)
             key_padding_mask = ~masks
 
-            identifier = input['identifier']
-            u_embedding = out_embedding
-            if self.pooling == 'token':
-                mask_special = torch.zeros((len(out_embedding), 1), device=out_embedding.device, dtype=key_padding_mask.dtype)
-                cplx_embed = self.complex_embedding.repeat(len(out_embedding), 1, 1)
-                prot_embed = self.prot_embedding.repeat(len(out_embedding), 1, 1)
-                rna_embed = self.rna_embedding.repeat(len(out_embedding), 1, 1)
-                out_embedding = torch.cat([cplx_embed, prot_embed, rna_embed, out_embedding], dim=1)
-                key_padding_mask = torch.cat([mask_special, mask_special, mask_special, key_padding_mask], dim=1)
-                zero_embed = torch.zeros_like(cplx_embed)
-                u_embedding = torch.cat([zero_embed, zero_embed, zero_embed, u_embedding], dim=1)
-                special_id = torch.full((len(out_embedding), 3), -1, device=identifier.device, dtype=identifier.dtype)
-                identifier = torch.cat([special_id, identifier], dim=1)
+            aa=input['restype']
+            res_nb=input['res_nb']
+            chain_nb=input['chain_nb']
+            pos_atoms=input['pos_atoms']
+            mask_atoms=input['mask_atoms']
 
-            left = self.z_left(u_embedding)
-            right = self.z_right(u_embedding)
-            z = left.unsqueeze(2) * right.unsqueeze(1)
-            is_prot = identifier == 0
-            is_rna = identifier == 1
-            cross = (is_prot[:, :, None] & is_rna[:, None, :]) | (is_rna[:, :, None] & is_prot[:, None, :])
-            valid = ~key_padding_mask
-            cross = cross & valid[:, :, None] & valid[:, None, :]
-            z = z * cross.unsqueeze(-1)
+            z = self.pair_encoder(
+                aa=aa,
+                res_nb=res_nb,
+                chain_nb=chain_nb,
+                pos_atoms=pos_atoms,
+                mask_atoms=mask_atoms,
+            )
             if need_mask:
                 for i in range(z.shape[0]):
                     to_mask = torch.rand(1).item() > 0.5
                     if not to_mask:
                         continue
-                    valid_idx = list(range(3, z.shape[1]))
-                    mask_indices = random.sample(valid_idx, int(len(valid_idx) * 0.15))
+                    valid = list(range(3, z.shape[1]))
+                    mask_indices = random.sample(valid, int(len(valid) * 0.15))
                     z[i, mask_indices, :, :] = self.mask_token.repeat(len(mask_indices), z.shape[2], 1)
                     z[i, :, mask_indices, :] = self.mask_token.repeat(z.shape[1], len(mask_indices), 1)
+
             return out_embedding, z, key_padding_mask
 
-        with torch.cuda.amp.autocast():
-            prot_embedding = self.esm(prot_input, repr_layers=[self.representation_layer], return_contacts=False)['representations'][self.representation_layer]
-            na_embedding = self.rinalmo(na_input)['representation']
-            if self.proj:
-                prot_embedding = self.project_feat(prot_embedding)
+        else:
+            with torch.cuda.amp.autocast():
+                prot_embedding = self.esm(
+                    prot_input,
+                    repr_layers=[self.representation_layer],
+                    return_contacts=False,
+                )['representations'][self.representation_layer]
+                na_embedding = self.rinalmo(na_input)['representation']
+                if self.proj:
+                    prot_embedding = self.project_feat(prot_embedding)
 
         prot_embedding = prot_embedding.float()
         na_embedding = na_embedding.float()
@@ -678,49 +532,6 @@ class ESM2RiNALMo(nn.Module):
         
     def forward(self, input, strategy='separate', stage='finetune', need_mask=False):
         out_embedding, z, key_padding_mask = self._forward(input, strategy, need_mask=need_mask)
-        use_precomputed = bool(input.get('use_precomputed_embeddings', False))
-        if use_precomputed and self.use_joint_query_pipeline and stage in ['finetune', 'pretune']:
-            if stage == 'finetune':
-                output = out_embedding
-                complex_embedding = output + self.z_proj(z).sum(-2) * 0.001
-                if self.pooling == 'token':
-                    complex_embedding = output[:, 0, :].squeeze(1)
-                else:
-                    complex_embedding = (output * (~key_padding_mask).unsqueeze(-1)).sum(dim=1)
-                    if self.pooling == 'mean':
-                        seq_mask_sum = (~key_padding_mask).sum(dim=1, keepdim=True)
-                        complex_embedding = complex_embedding / (seq_mask_sum + 1e-10)
-                output = self.pred_head(complex_embedding)
-                output = output.squeeze(1)
-                return output
-
-            res_identifier = input['identifier']
-            if self.pooling == 'token':
-                prot_token_identifier = torch.zeros(len(out_embedding), 1, dtype=res_identifier.dtype, device=res_identifier.device)
-                rna_token_identifier = torch.ones(len(out_embedding), 1, dtype=res_identifier.dtype, device=res_identifier.device)
-                res_identifier = torch.cat([prot_token_identifier, rna_token_identifier, res_identifier], dim=1)
-            output = out_embedding
-            if self.pooling == 'token':
-                complex_embedding = output[:, 0, :].squeeze(1)
-                prot_embedding = output[:, 1, :].squeeze(1)
-                rna_embedding = output[:, 2, :].squeeze(1)
-            else:
-                complex_embedding = (output * (~key_padding_mask).unsqueeze(-1)).sum(dim=1)
-                prot_embedding = (output * (~key_padding_mask).unsqueeze(-1) * (1-res_identifier).unsqueeze(-1)).sum(dim=1)
-                rna_embedding = (output * (~key_padding_mask).unsqueeze(-1) * (res_identifier.unsqueeze(-1))).sum(dim=1)
-                if self.pooling == 'mean':
-                    cplx_mask_sum = (~key_padding_mask).sum(dim=1, keepdim=True)
-                    prot_mask_sum = ((~key_padding_mask) * (1-res_identifier)).sum(dim=1, keepdim=True)
-                    rna_mask_sum = ((~key_padding_mask) * (res_identifier)).sum(dim=1, keepdim=True)
-                    complex_embedding = complex_embedding / (cplx_mask_sum + 1e-10)
-                    prot_embedding = prot_embedding / (prot_mask_sum + 1e-10)
-                    rna_embedding = rna_embedding / (rna_mask_sum + 1e-10)
-
-            similarity = F.cosine_similarity(prot_embedding[:, None, :], rna_embedding[None, :, :], dim=2)
-            dist_logits = self.dist_head(z)
-            dist_logits = dist_logits[:, 3:, 3:, :]
-            return dist_logits, similarity
-
         if stage == 'finetune':
                 
             output, z, attn = self.c_former(out_embedding, z, key_padding_mask=key_padding_mask, need_attn_weights=False)
@@ -832,8 +643,8 @@ class ESM2RiNALMo(nn.Module):
                 
                 output_forward = self.pred_head(forward_embedding).squeeze(1)
                 output_inv = self.pred_head(inv_embedding).squeeze(1)
-
-            return output_forward, output_inv
+                
+                return output_forward, output_inv
 
         else:
             raise NotImplementedError

@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 os.environ["NUMEXPR_MAX_THREADS"] = '56'
 os.environ["MKL_NUM_THREADS"] = '4'
 os.environ["OMP_NUM_THREADS"] = '4'
@@ -20,7 +19,6 @@ from pytorch_lightning.callbacks import TQDMProgressBar, EarlyStopping, ModelChe
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pl_modules import ModelModule, DataModule, PretuneModule, DDGModule
 from collections import defaultdict
-import subprocess
 
 torch.set_num_threads(16)
 
@@ -32,12 +30,7 @@ def parse_yaml(yaml_dir):
     return config_dict
 def init_pytorch_settings():
     # Multiprocess Setting to speedup dataloader
-    # 使用 spawn 而不是 forkserver，更稳定且内存占用更小
-    try:
-        torch.multiprocessing.set_start_method('spawn', force=True)
-    except RuntimeError:
-        # 如果已经设置过，使用当前方法
-        pass
+    torch.multiprocessing.set_start_method('forkserver')
     torch.multiprocessing.set_sharing_strategy('file_system')
     # torch.set_float32_matmul_precision('high')
     torch.set_num_threads(4)
@@ -51,8 +44,6 @@ class LightningRunner(object):
         self.model_args = parse_yaml(model_config)
         self.dataset_args = parse_yaml(data_config)
         self.run_args = parse_yaml(run_config)
-        if hasattr(self.dataset_args, "embedding_root") and self.dataset_args.embedding_root:
-            self.model_args.model.embedding_root = self.dataset_args.embedding_root
         init_pytorch_settings()
 
     def save_model(self, model, output_dir, trainer):
@@ -62,17 +53,6 @@ class LightningRunner(object):
             best_model = module.model
             (output_dir / 'model_data.json').write_text(json.dumps(vars(self.dataset_args), indent=2))
             torch.save(best_model, str(output_dir / 'model.pt'))
-
-    def run_feature_extraction(self):
-        if not getattr(self.run_args, 'feature_extract', False):
-            return
-        cfg_path = getattr(self.run_args, 'feature_extract_config', None)
-        if not cfg_path:
-            raise ValueError("feature_extract is enabled but feature_extract_config is not set.")
-        cfg_path = Path(cfg_path).resolve()
-        cmd = [sys.executable, str(Path(__file__).parent / "extract_features.py"), "--config", str(cfg_path)]
-        print(f"Running feature extraction: {' '.join(cmd)}")
-        subprocess.run(cmd, check=True)
     
     def select_module(self, stage, log_dir):
         if stage=='pretune':
@@ -89,26 +69,13 @@ class LightningRunner(object):
         print("Run args:", self.run_args, "\n")
         print("Model args:", self.model_args, "\n")
         print("Dataset args:", self.dataset_args, "\n")
-        output_dir, gpus = (self.run_args.output_dir, self.run_args.gpus)
+        output_base_dir, gpus = (self.run_args.output_dir, self.run_args.gpus)
         self.model_args.model.stage = stage
-
-        if int(os.environ.get("LOCAL_RANK", "0")) == 0:
-            self.run_feature_extraction()
-        
-        # 为输出目录添加时间戳
-        timestamp = time.strftime("%Y-%m-%d-%H-%M-%S")
-        base_output_dir = Path(output_dir)
-        # 如果配置中有 run_name，将其加入路径；否则只使用时间戳
-        if hasattr(self.run_args, 'run_name') and self.run_args.run_name:
-            output_dir = base_output_dir / f"{self.run_args.run_name}_{timestamp}"
-        else:
-            output_dir = base_output_dir / timestamp
-        output_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Output directory: {output_dir}")
-        
         # Setup datamodule
         run_results = []
-        name = (self.run_args.run_name if hasattr(self.run_args, 'run_name') and self.run_args.run_name else 'run') + f"_{timestamp}"
+        run_id = self.run_args.run_name + time.strftime("%Y-%m-%d-%H-%M-%S")
+        output_dir = Path(output_base_dir) / run_id
+        output_dir.mkdir(parents=True, exist_ok=True)
         for k in range(self.run_args.num_folds):
             # if k != 4:
             #     continue
@@ -120,7 +87,7 @@ class LightningRunner(object):
             model = self.select_module(stage, log_dir)
             # Trainer setting
             if self.run_args.wandb:
-                wandb.init(project='copra', name=name)
+                wandb.init(project='copra', name=run_id)
                 logger = WandbLogger()
             else:
                 logger = CSVLogger(str(log_dir))
@@ -133,11 +100,18 @@ class LightningRunner(object):
                 devices=gpus,
                 # max_steps=self.run_args.iters,
                 max_epochs=self.run_args.epochs,
+                accumulate_grad_batches=int(getattr(self.run_args, "accumulate_grad_batches", 1)),
                 logger=logger,
                 callbacks=[
                     EarlyStopping(monitor="val_loss", mode="min", patience=self.run_args.patience, strict=False),
-                    ModelCheckpoint(dirpath=(log_dir / 'checkpoint'), filename='{epoch}-{val_loss:.3f}',
-                                    monitor="val_loss", mode="min", save_last=True, save_top_k=3),
+                    ModelCheckpoint(
+                        dirpath=(log_dir / 'checkpoint'),
+                        filename='best-{epoch}-{val_loss:.3f}',
+                        monitor="val_loss",
+                        mode="min",
+                        save_last=True,   # writes last.ckpt
+                        save_top_k=1,     # keep only best + last
+                    ),
                 ],
                 # gradient_clip_val=self.model_args.train.max_grad_norm if self.model_args.train.max_grad_norm is not None else None,
                 # gradient_clip_algorithm='norm' if self.model_args.train.max_grad_norm is not None else None,
@@ -153,20 +127,24 @@ class LightningRunner(object):
             run_results.append(res)
             if trainer.global_rank == 0:
                 self.save_model(model, output_dir, trainer)
-        result_dir = Path(output_dir) / name
-        os.makedirs(result_dir, exist_ok=True)
-        with open(result_dir / 'res.json', 'w') as f:
+        with open(output_dir / 'res.json', 'w') as f:
             json.dump(run_results, f)
         results_df = pd.DataFrame(run_results)
         print(results_df.describe())
 
     def test(self, stage='dG'):
         print("Args:", self.run_args, self.dataset_args, self.model_args)
-        output_dir, ckpts, gpus = (self.run_args.output_dir, self.run_args.ckpts,
-                                   self.run_args.gpus)
+        output_base_dir, ckpts, gpus = (
+            self.run_args.output_dir,
+            self.run_args.ckpts,
+            self.run_args.gpus,
+        )
+        # create a timestamped run directory under output_dir, same as finetune
+        run_id = self.run_args.run_name + time.strftime("%Y-%m-%d-%H-%M-%S")
+        output_dir = Path(output_base_dir) / run_id
+        output_dir.mkdir(parents=True, exist_ok=True)
         run_results = []
         for k in range(self.run_args.num_folds):
-            output_dir = Path(output_dir)
             log_dir = output_dir / f'log_fold_{k}'
             data_module = DataModule(dataset_args=self.dataset_args, **self.dataset_args, col_group=f'fold_{k}')
             # data_module.setup()

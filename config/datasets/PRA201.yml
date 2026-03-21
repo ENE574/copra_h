@@ -2,7 +2,7 @@ dataset_type: 'structure_dataset'
 df_path: './datasets/PRA310/splits/PRA201.csv'
 batch_size: 16
 data_root: './datasets/PRA310/PDBs'
-num_workers: 2
+num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
 col_prot: 'Protein sequences'
@@ -12,6 +12,10 @@ pin_memory: True
 cache_dir: './cache/pra201'
 loss_type: regression
 strategy: separate
+
+# Use the same precomputed embeddings as PRA310 (PRA201 is a subset of PRA310)
+use_offline_embeddings: true
+offline_embedding_root: './outputs/feature_extraction_PRA310'
 
 transform:
   - type: select_atom

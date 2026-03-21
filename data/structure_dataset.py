@@ -210,6 +210,10 @@ class StructureDataset(Dataset):
                     item['embedding_strict'] = self.embedding_strict
                     
                 cplx.update(item)
+                # Keep chain ids so collate/model can map to offline embeddings:
+                # offline files are named like {PDB}_prot_{chain}.pt and {PDB}_rna_{chain}.pt
+                cplx["prot_chain_ids"] = prot_chains
+                cplx["rna_chain_ids"] = na_chains
                 # print("Complex {} is:".format(i), cplx)
                 self.data.append(cplx)
                 if self.diskcache is not None:
@@ -218,6 +222,16 @@ class StructureDataset(Dataset):
             else:
                 data = self.diskcache[structure_id]
                 data['complex'] = complex
+                # diskcache may contain old entries without these keys; reconstruct from csv row
+                try:
+                    data["prot_chain_ids"] = row[self.col_prot_chain].split(',')
+                    data["rna_chain_ids"] = row[self.col_na_chain].split(',')
+                except Exception:
+                    # keep backward compatibility if columns are missing
+                    if "prot_chain_ids" not in data:
+                        data["prot_chain_ids"] = []
+                    if "rna_chain_ids" not in data:
+                        data["rna_chain_ids"] = []
                 self.data.append(data)
     
     def __len__(self):
@@ -238,9 +252,10 @@ DEFAULT_PAD_VALUES = {
 }
 
 class CustomStructCollate(object):
-    def __init__(self, strategy='separate', length_ref_key='restype', pad_values=DEFAULT_PAD_VALUES, exclude_keys=EXCLUDE_KEYS, eight=True):
+    def __init__(self, strategy='separate', dataset_args=None, length_ref_key='restype', pad_values=DEFAULT_PAD_VALUES, exclude_keys=EXCLUDE_KEYS, eight=True):
         super().__init__()
         self.strategy = strategy
+        self.dataset_args = dataset_args
         self.length_ref_key = length_ref_key
         self.pad_values = pad_values
         self.exclude_keys = exclude_keys
@@ -293,7 +308,11 @@ class CustomStructCollate(object):
         keys_inter = self._get_common_keys(data_list)
         keys = []
         keys_not_pad = []
-        keys_ignore = ['prot_seqs', 'rna_seqs', 'mut_seqs', 'max_prot_length', 'max_na_length', 'atom_min_dist']
+        keys_ignore = [
+            'prot_seqs', 'rna_seqs', 'mut_seqs',
+            'prot_chain_ids', 'rna_chain_ids',
+            'max_prot_length', 'max_na_length', 'atom_min_dist'
+        ]
         for key in keys_inter:
             if key in keys_ignore:
                 continue
@@ -513,6 +532,77 @@ class CustomStructCollate(object):
             batch['use_precomputed_embeddings'] = True
         batch['strategy'] = self.strategy
         batch['labels'] = batch['labels'].float()
+
+        # Optional: attach offline embeddings (12 models, 4 groups) to the batch so the model
+        # can bypass online ESM/RiNALMo forward.
+        use_offline = False
+        offline_root = None
+        if self.dataset_args is not None:
+            use_offline = bool(getattr(self.dataset_args, "use_offline_embeddings", False))
+            offline_root = getattr(self.dataset_args, "offline_embedding_root", None)
+
+        if use_offline:
+            if offline_root is None:
+                raise ValueError("use_offline_embeddings=True but dataset_args.offline_embedding_root is not set")
+            from utils.offline_embeddings import OfflineEmbeddingSpec, load_offline_token_embeddings
+
+            spec = OfflineEmbeddingSpec(root=offline_root)
+            max_prot_len = int(prot_batch.shape[1])
+            max_rna_len = int(na_batch.shape[1])
+
+            def _pad_into_token_space(x_residue, max_len):
+                # current token space: [CLS] + residues + [EOS] + pad
+                # offline token_embeddings are residue-level [L, D]
+                L = int(x_residue.shape[0])
+                out = x_residue.new_zeros((max_len, int(x_residue.shape[1])))
+                end = min(L, max_len - 2)
+                if end > 0:
+                    out[1:1 + end] = x_residue[:end]
+                return out
+
+            offline = {
+                "prot_seq": {m: [] for m in spec.protein_sequence_models},
+                "prot_struct": {m: [] for m in spec.protein_structure_models},
+                "rna_seq": {m: [] for m in spec.rna_sequence_models},
+                "rna_struct": {m: [] for m in spec.rna_structure_models},
+            }
+
+            # Important: keep the same iteration order as pad_for_berts (item -> chains)
+            for item in data_list:
+                pdb_id = item["complex"]
+                prot_chain_ids = item.get("prot_chain_ids", [])
+                rna_chain_ids = item.get("rna_chain_ids", [])
+
+                for chain_id in prot_chain_ids:
+                    for m in spec.protein_sequence_models:
+                        p = spec.file_path("protein_sequence", m, pdb_id, "prot", chain_id)
+                        offline["prot_seq"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_prot_len))
+                    for m in spec.protein_structure_models:
+                        p = spec.file_path("protein_structure", m, pdb_id, "prot", chain_id)
+                        offline["prot_struct"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_prot_len))
+
+                for chain_id in rna_chain_ids:
+                    for m in spec.rna_sequence_models:
+                        p = spec.file_path("rna_sequence", m, pdb_id, "rna", chain_id)
+                        offline["rna_seq"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_rna_len))
+                    for m in spec.rna_structure_models:
+                        p = spec.file_path("rna_structure", m, pdb_id, "rna", chain_id)
+                        offline["rna_struct"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_rna_len))
+
+            # Stack into [total_chains, T, D] tensors
+            for group in offline:
+                for m in offline[group]:
+                    if len(offline[group][m]) == 0:
+                        raise RuntimeError(
+                            "Offline embedding list is empty for group='{}' model='{}'. "
+                            "Likely missing prot_chain_ids/rna_chain_ids in cached samples, or wrong offline_embedding_root."
+                            .format(group, m)
+                        )
+                    offline[group][m] = torch.stack(offline[group][m], dim=0)
+
+            batch["use_offline_embeddings"] = True
+            batch["offline_embeddings"] = offline
+
         return batch
     
     

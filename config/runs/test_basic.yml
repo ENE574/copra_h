@@ -1,14 +1,33 @@
-output_dir: './outputs/esm2rinalmo_650M/test_struct/best_model'
+output_dir: './outputs/PRA310_csan'
 gpus:
   - 0
 
 ckpts: 
-  - ./weights/CoPRA_5fold/CoPRA_fold0.ckpt
-  - ./weights/CoPRA_5fold/CoPRA_fold1.ckpt
-  - ./weights/CoPRA_5fold/CoPRA_fold2.ckpt
-  - ./weights/CoPRA_5fold/CoPRA_fold3.ckpt
-  - ./weights/CoPRA_5fold/CoPRA_fold4.ckpt
-
-run_name: 'esm2rinalmo_test_best'
+  # - ./weights/CoPRA_5fold/CoPRA_fold0.ckpt
+  # - ./weights/CoPRA_5fold/CoPRA_fold1.ckpt
+  # - ./weights/CoPRA_5fold/CoPRA_fold2.ckpt
+  # - ./weights/CoPRA_5fold/CoPRA_fold3.ckpt
+  # - ./weights/CoPRA_5fold/CoPRA_fold4.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310/ckpt=null_agb=4_lr=3.5e-5_wd=0_2026-03-20-14-42-23/log_fold_0/checkpoint/best-epoch=23-val_loss=2.074.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310/ckpt=null_batch=64_agb=16_lr=4e-5_wd=0_2026-03-18-17-30-57/log_fold_1/checkpoint/best-epoch=32-val_loss=1.344.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310/ckpt=null_batch=64_agb=16_lr=4e-5_wd=0_2026-03-18-17-30-57/log_fold_2/checkpoint/best-epoch=25-val_loss=1.390.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-20-14-41-28/log_fold_3/checkpoint/best-epoch=12-val_loss=2.146.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310/ckpt=null_batch=64_agb=8_lr=4e-5_wd=0_2026-03-20-14-43-34/log_fold_4/checkpoint/best-epoch=33-val_loss=2.024.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-19-00-42-11/log_fold_0/checkpoint/best-epoch=42-val_loss=2.483.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-19-00-41-18/log_fold_1/checkpoint/best-epoch=22-val_loss=1.076.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-19-00-41-18/log_fold_2/checkpoint/best-epoch=10-val_loss=0.985.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210/ckpt=null_agb=1_lr=4e-5_wd=0_2026-03-19-00-39-26/log_fold_3/checkpoint/best-epoch=10-val_loss=2.059.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210/ckpt=null_agb=1_lr=4e-5_wd=0_2026-03-19-00-39-26/log_fold_4/checkpoint/best-epoch=19-val_loss=1.898.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-21-01-19-57/log_fold_0/checkpoint/best-epoch=23-val_loss=2.260.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_agb=4_lr=3e-5_wd=0_2026-03-21-01-38-10/log_fold_1/checkpoint/best-epoch=11-val_loss=1.316.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-21-01-19-57/log_fold_2/checkpoint/best-epoch=9-val_loss=1.542.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-21-01-39-17/log_fold_3/checkpoint/best-epoch=20-val_loss=1.956.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_batch=64_agb=8_lr=4e-5_wd=0_2026-03-21-01-40-10/log_fold_4/checkpoint/best-epoch=41-val_loss=1.975.ckpt
+  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=1_lr=4e-5_wd=0_2026-03-21-09-37-36/log_fold_0/checkpoint/best-epoch=16-val_loss=2.275.ckpt
+  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=8_lr=4e-5_wd=0_2026-03-21-09-35-48/log_fold_1/checkpoint/best-epoch=24-val_loss=1.145.ckpt
+  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-21-09-37-00/log_fold_2/checkpoint/best-epoch=10-val_loss=1.138.ckpt
+  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=8_lr=4e-5_wd=0_2026-03-21-09-35-48/log_fold_3/checkpoint/best-epoch=11-val_loss=1.972.ckpt
+  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-21-09-36-27/log_fold_4/checkpoint/best-epoch=25-val_loss=1.816.ckpt
+run_name: 'test_best_'
 wandb: False
 num_folds: 5

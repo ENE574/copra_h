@@ -22,6 +22,10 @@ model:
   pooling: token
   output_dim: 1
   fix_lms: true
+  # If true, bypass online ESM/RiNALMo and use 12 offline embeddings provided by dataloader
+  use_offline_embeddings: true
+  # Unified feature dim for offline fusion/attention; must be divisible by coformer.num_heads
+  offline_dim: 1280
   lora_tune: false
   lora_rank: 16
   lora_alpha: 32
@@ -40,6 +44,7 @@ model:
     residual_dropout: 0.1
     transition_factor: 4
     use_flash_attn: false
+    attention_type: csan
 
 train:
   temperature: 0.2
@@ -49,7 +54,7 @@ train:
   max_grad_norm: 100.0
   optimizer:
     type: adam
-    lr: 3.e-5
+    lr: 4.e-5
     weight_decay: 0.0
     beta1: 0.9
     beta2: 0.999

@@ -1,36 +1,21 @@
 dataset_type: 'structure_dataset'
 df_path: './datasets/PRA310/splits/PRA310.csv'
-batch_size: 16
+batch_size: 8
 data_root: './datasets/PRA310/PDBs'
-num_workers: 0  # 减少到0以避免多进程内存问题
+num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
 col_prot: 'Protein sequences'
 col_na: 'RNA sequences'
 col_label: '△G(kcal/mol)'
-pin_memory: False  # 禁用pin_memory以降低内存占用
+pin_memory: True
 cache_dir: './cache/pra310'
 loss_type: regression
 strategy: separate
-use_precomputed_embeddings: true
-embedding_root: './outputs/feature_extraction'
-seq_prot_models:
-  - 'esm2'
-  - 'prott5'
-  - 'saprot'
-seq_rna_models:
-  - 'rinalmo'
-  - 'rna_msm'
-  - 'rna_fm'
-str_prot_models:
-  - 'esm_if1'
-  - 'protrek'
-  - 'protbert'
-str_rna_models:
-  - 'rna_ernie'
-  - 'rnabert'
-  - 'rhofold'
-embedding_strict: true
+
+# Use precomputed embeddings in ./outputs/feature_extraction_PRA310 (12 models, 4 groups)
+use_offline_embeddings: true
+offline_embedding_root: './outputs/feature_extraction_PRA310'
 
 transform:
   - type: select_atom

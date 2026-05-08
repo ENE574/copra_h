@@ -22,9 +22,7 @@ model:
   pooling: token
   output_dim: 1
   fix_lms: true
-  # If true, bypass online ESM/RiNALMo and use 12 offline embeddings provided by dataloader
   use_offline_embeddings: true
-  # Unified feature dim for offline fusion/attention; must be divisible by coformer.num_heads
   offline_dim: 1280
   lora_tune: false
   lora_rank: 16
@@ -52,14 +50,24 @@ train:
   val_freq: 1000
   seed: 2024
   max_grad_norm: 100.0
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: huber
+  huber_delta: 2.0
+  physics_aux_max_weight: 0.05
+  physics_aux_warmup_epochs: 5
+  physics_aux_decay_epochs: 10
+  physics_aux_min_weight: 0.0
+  physics_aux_normalize: true
+  physics_aux_clip: 2.0
   optimizer:
     type: adam
     lr: 4.e-5
-    weight_decay: 0.0
+    weight_decay: 1.e-3
     beta1: 0.9
     beta2: 0.999
   scheduler:
     type: plateau
     factor: 0.8
-    patience: 5
+    patience: 3
     min_lr: 1.e-6

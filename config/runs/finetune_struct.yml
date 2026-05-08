@@ -1,14 +1,14 @@
-epochs: 50
+epochs: 20
 patience: 150
-output_dir: './outputs/PRA210_csan'
+output_dir: '/media/SSD0/csd/lrg/outputs/PRA310_ablation'
 gpus:
   - 0
 
 ckpt: null
 
-run_name: 'ckpt=null_agb=1_lr=4e-5_wd=0_'
+run_name: 'phys_off_'
 wandb: False
 num_folds: 5
 
 # Gradient accumulation steps (effective batch size = batch_size * accumulate_grad_batches)
-accumulate_grad_batches: 1
+accumulate_grad_batches: 2

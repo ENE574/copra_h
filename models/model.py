@@ -120,6 +120,7 @@ class ESM2RiNALMo(nn.Module):
                  dist_dim=40,
                  use_offline_embeddings=False,
                  offline_dim=1280,
+                 main_refinement_scale=0.1,
                  **kwargs
                  ):
         super(ESM2RiNALMo, self).__init__()
@@ -184,13 +185,49 @@ class ESM2RiNALMo(nn.Module):
 
         # Offline embedding fusion modules (12 models, 4 groups) + interactions
         if self.use_offline_embeddings:
+            def _as_list(x):
+                if x is None:
+                    return []
+                if isinstance(x, str):
+                    return [x]
+                return list(x)
+
             # Per-model input dims
             self._offline_dims = {
                 "prot_seq": {"esm2": 1280, "prott5": 1024, "saprot": 1280},
                 "prot_struct": {"esm_if1": 512, "protbert": 1024, "protrek": 1024},
                 "rna_seq": {"rinalmo": 1280, "rna_fm": 640, "rna_msm": 768},
-                "rna_struct": {"ERNIE-RNA": 768, "rhofold": 384, "rnabert": 120},
+                "rna_struct": {"ernie_rna": 768, "rhofold": 384, "rnabert": 120},
             }
+
+            self._all_offline_models = {
+                "prot_seq": ["esm2", "prott5", "saprot"],
+                "prot_struct": ["esm_if1", "protbert", "protrek"],
+                "rna_seq": ["rinalmo", "rna_fm", "rna_msm"],
+                "rna_struct": ["ernie_rna", "rhofold", "rnabert"],
+            }
+
+            enabled = {
+                "prot_seq": set(_as_list(kwargs.get("seq_prot_models"))),
+                "rna_seq": set(_as_list(kwargs.get("seq_rna_models"))),
+                "prot_struct": set(_as_list(kwargs.get("str_prot_models"))),
+                "rna_struct": set(_as_list(kwargs.get("str_rna_models"))),
+            }
+
+            disable_all_groups = set()
+            for group in list(enabled.keys()):
+                # allow explicit disable via: ['none'] or 'none'
+                if enabled[group] == {"none"}:
+                    enabled[group] = set()
+                    disable_all_groups.add(group)
+
+            if "rna_ernie" in enabled["rna_struct"]:
+                enabled["rna_struct"].remove("rna_ernie")
+                enabled["rna_struct"].add("ernie_rna")
+            for group, all_ms in self._all_offline_models.items():
+                if len(enabled[group]) == 0 and group not in disable_all_groups:
+                    enabled[group] = set(all_ms)
+            self._enabled_offline_models = enabled
 
             def _make_proj(d_in):
                 return nn.Linear(d_in, self.feat_size)
@@ -235,6 +272,8 @@ class ESM2RiNALMo(nn.Module):
                 
         self.pooling = pooling
         print("Pooling Strategy:", self.pooling)
+
+        self.main_refinement_scale = float(main_refinement_scale)
         if self.pooling == 'token':
             self.prot_embedding = nn.Parameter(torch.zeros((1, self.complex_dim), dtype=torch.float32))
             self.rna_embedding = nn.Parameter(torch.zeros((1, self.complex_dim), dtype=torch.float32))
@@ -244,6 +283,18 @@ class ESM2RiNALMo(nn.Module):
             nn.init.normal_(self.complex_embedding)
         if pair_dim != self.complex_dim:
             self.z_proj = nn.Linear(pair_dim, self.complex_dim)
+        
+        # Physical Decomposition Heads
+        self.physics_names = ['contact', 'electro', 'hydrophobic', 'stacking']
+        self.physics_heads = nn.ModuleDict({
+            name: nn.Sequential(
+                nn.Linear(self.complex_dim, self.feat_size), nn.ReLU(),
+                nn.Linear(self.feat_size, 1)
+            ) for name in self.physics_names
+        })
+        # Learnable weights for each physical component (initialized to 1.0)
+        self.physics_weights = nn.Parameter(torch.ones(len(self.physics_names)))
+        
         self.pred_head = nn.Sequential(
             nn.Linear(self.complex_dim, self.feat_size), nn.ReLU(),
             nn.Linear(self.feat_size, self.feat_size), nn.ReLU(),
@@ -353,23 +404,31 @@ class ESM2RiNALMo(nn.Module):
             def _proj(group, model, x):
                 return self.offline_proj["{}/{}".format(group, model)](x)
 
+            def _maybe_disable(group, model, x):
+                enabled = getattr(self, "_enabled_offline_models", None)
+                if enabled is None:
+                    return x
+                if model not in enabled.get(group, set()):
+                    return x * 0.0
+                return x
+
             # Prepare 3 projected tensors per group for fusion
             prot_seq_3 = []
             for m in ["esm2", "prott5", "saprot"]:
                 t, _ = _pad_list(prot_seq_list[m], max_prot)
-                prot_seq_3.append(_proj("prot_seq", m, t))
+                prot_seq_3.append(_maybe_disable("prot_seq", m, _proj("prot_seq", m, t)))
             prot_struct_3 = []
             for m in ["esm_if1", "protbert", "protrek"]:
                 t, _ = _pad_list(prot_struct_list[m], max_prot)
-                prot_struct_3.append(_proj("prot_struct", m, t))
+                prot_struct_3.append(_maybe_disable("prot_struct", m, _proj("prot_struct", m, t)))
             rna_seq_3 = []
             for m in ["rinalmo", "rna_fm", "rna_msm"]:
                 t, _ = _pad_list(rna_seq_list[m], max_rna)
-                rna_seq_3.append(_proj("rna_seq", m, t))
+                rna_seq_3.append(_maybe_disable("rna_seq", m, _proj("rna_seq", m, t)))
             rna_struct_3 = []
-            for m in ["ERNIE-RNA", "rhofold", "rnabert"]:
+            for m in ["ernie_rna", "rhofold", "rnabert"]:
                 t, _ = _pad_list(rna_struct_list[m], max_rna)
-                rna_struct_3.append(_proj("rna_struct", m, t))
+                rna_struct_3.append(_maybe_disable("rna_struct", m, _proj("rna_struct", m, t)))
 
             # Padding masks (same across models within an entity)
             _, prot_pad_mask = _pad_list(prot_seq_list["esm2"], max_prot)
@@ -538,17 +597,27 @@ class ESM2RiNALMo(nn.Module):
 
             complex_embedding = output + self.z_proj(z).sum(-2) * 0.001
             if self.pooling == 'token':
-                complex_embedding = output[:, 0, :].squeeze(1)
+                pooled = output[:, 0, :]
             else:
-                complex_embedding = (output * (~key_padding_mask).unsqueeze(-1)).sum(dim=1)
+                pooled = (output * (~key_padding_mask).unsqueeze(-1)).sum(dim=1)
                 if self.pooling == 'mean':
-                    # Prot_mask: [N, L]
                     seq_mask_sum = (~key_padding_mask).sum(dim=1, keepdim=True)
-                    complex_embedding = complex_embedding / (seq_mask_sum + 1e-10)
+                    pooled = pooled / (seq_mask_sum + 1e-10)
 
-            output = self.pred_head(complex_embedding)
-            output = output.squeeze(1)
-            return output
+            # Predict physical components (auxiliary, for regularization / interpretability)
+            physics_outputs = {}
+            for name in self.physics_names:
+                physics_outputs[name] = self.physics_heads[name](pooled).squeeze(-1)
+
+            # Main prediction from pred_head (this is the only term used for final prediction)
+            main_pred = self.pred_head(pooled).squeeze(-1)
+
+            return {
+                'pred': main_pred,
+                'physics': physics_outputs,
+                'main_refinement': main_pred,
+                'pooled': pooled
+            }
             
         elif stage == 'pretune':
             # -------------------------------------------CLIP feature generation ----------------------------------------------

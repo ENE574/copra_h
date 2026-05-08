@@ -2,7 +2,7 @@ from data.complex import ComplexInput
 from data.register import DataRegister
 from torch.utils.data import Dataset
 import pandas as pd
-import esm
+from esm.data import Alphabet as ESMAlphabet
 import torch
 from tqdm import tqdm
 from rinalmo.data.constants import *
@@ -92,7 +92,7 @@ class StructureDataset(Dataset):
         self.col_na = col_na
         self.type = 'reg'
         self.diskcache = diskcache
-        self.prot_alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
+        self.prot_alphabet = ESMAlphabet.from_architecture("ESM-1b")
         self.na_alphabet = Alphabet(**na_alphabet_config)
         self.mut = mut
         self.col_mut = col_mut
@@ -171,6 +171,73 @@ class StructureDataset(Dataset):
                 mask = (gpu_masks[:, None, :, None] * gpu_masks[None, :, None, :]).reshape(L, L, -1)
                 distance_map[~mask] = torch.inf
                 atom_min_dist = torch.min(distance_map, dim=-1)[0]
+                
+                # --- Heuristic Physical Properties Calculation (interface-aware) ---
+                # NOTE:
+                #   We only consider protein-RNA interface contacts (exclude intra-protein / intra-RNA).
+                #   These are weak labels for auxiliary supervision.
+                
+                identifier = cplx["identifier"].to(atom_min_dist.device)
+                prot_idx = torch.nonzero(identifier == 0, as_tuple=False).flatten()
+                rna_idx = torch.nonzero(identifier == 1, as_tuple=False).flatten()
+
+                contact_thr = 4.5
+                if len(prot_idx) == 0 or len(rna_idx) == 0:
+                    contact_intensity = atom_min_dist.new_tensor(0.0)
+                    electro_score = atom_min_dist.new_tensor(0.0)
+                    hydrophobic_score = atom_min_dist.new_tensor(0.0)
+                    stacking_score = atom_min_dist.new_tensor(0.0)
+                else:
+                    interface_min_dist = atom_min_dist.index_select(0, prot_idx).index_select(1, rna_idx)
+                    interface_contacts = (interface_min_dist < contact_thr)
+
+                    # 1) Contact intensity: fraction of protein-RNA residue pairs in contact.
+                    contact_intensity = interface_contacts.float().mean()
+
+                    # Interface protein residues: any contact to RNA
+                    prot_iface_mask = interface_contacts.any(dim=1)
+                    prot_iface_restypes = cplx["restype"].index_select(0, prot_idx)[prot_iface_mask]
+
+                    if prot_iface_restypes.numel() == 0:
+                        electro_score = atom_min_dist.new_tensor(0.0)
+                        hydrophobic_score = atom_min_dist.new_tensor(0.0)
+                        stacking_score = atom_min_dist.new_tensor(0.0)
+                    else:
+                        # Residue type ids come from data.protein.residue_constants.restype_order
+                        basic_ids = prot_iface_restypes.new_tensor([
+                            restype_order["R"], restype_order["K"], restype_order["H"]
+                        ])
+                        acidic_ids = prot_iface_restypes.new_tensor([
+                            restype_order["D"], restype_order["E"]
+                        ])
+                        aromatic_ids = prot_iface_restypes.new_tensor([
+                            restype_order["F"], restype_order["W"], restype_order["Y"]
+                        ])
+                        hydrophobic_ids = prot_iface_restypes.new_tensor([
+                            restype_order["A"], restype_order["V"], restype_order["I"], restype_order["L"],
+                            restype_order["M"], restype_order["F"], restype_order["W"], restype_order["Y"],
+                            restype_order["P"], restype_order["C"]
+                        ])
+
+                        basic_frac = torch.isin(prot_iface_restypes, basic_ids).float().mean()
+                        acidic_frac = torch.isin(prot_iface_restypes, acidic_ids).float().mean()
+                        aromatic_frac = torch.isin(prot_iface_restypes, aromatic_ids).float().mean()
+                        hydrophobic_frac = torch.isin(prot_iface_restypes, hydrophobic_ids).float().mean()
+
+                        # 2) Electro: more basic than acidic at interface should favor binding to RNA (negatively charged)
+                        electro_score = contact_intensity * (basic_frac - acidic_frac)
+                        # 3) Hydrophobic: interface hydrophobic enrichment
+                        hydrophobic_score = contact_intensity * hydrophobic_frac
+                        # 4) Stacking: aromatic enrichment (proxy for pi-stacking propensity)
+                        stacking_score = contact_intensity * aromatic_frac
+
+                physics_targets = {
+                    "contact": contact_intensity,
+                    "electro": electro_score,
+                    "hydrophobic": hydrophobic_score,
+                    "stacking": stacking_score,
+                }
+                
                 max_prot_length = 0
                 max_na_length = 0
                 for prot_seq in cplx.prot_seqs:
@@ -188,7 +255,8 @@ class StructureDataset(Dataset):
                         'max_na_length': max_na_length,
                         'mut_seqs': mut_seqs,
                         'mut_restype': mut_restype,
-                        'mut_identifier': mut_identifier
+                        'mut_identifier': mut_identifier,
+                        'physics_targets': physics_targets
                 }
                 else:
                     item = {
@@ -196,7 +264,8 @@ class StructureDataset(Dataset):
                         'labels': label,
                         'atom_min_dist': atom_min_dist, # needs 2D padding
                         'max_prot_length': max_prot_length,
-                        'max_na_length': max_na_length
+                        'max_na_length': max_na_length,
+                        'physics_targets': physics_targets
                     }
                 item['prot_chain_ids'] = prot_chains
                 item['rna_chain_ids'] = na_chains
@@ -338,7 +407,7 @@ class CustomStructCollate(object):
         return data_list_padded
 
     def pad_for_berts(self, strategy, batch):
-        prot_alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
+        prot_alphabet = ESMAlphabet.from_architecture("ESM-1b")
         na_alphabet = Alphabet(**na_alphabet_config)
         mut_flag = 0
         prot_chains = [len(item['prot_seqs']) for item in batch]
@@ -487,6 +556,19 @@ class CustomStructCollate(object):
             )
 
     def __call__(self, data_list):
+        def _to_plain(obj):
+            # Avoid returning EasyDict or other custom Mapping types in the batch.
+            # Lightning/DDP moves batches to device by reconstructing Mapping types,
+            # and EasyDict cannot be reconstructed from tuple pairs.
+            if isinstance(obj, dict):
+                return {k: _to_plain(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return type(obj)(_to_plain(v) for v in obj)
+            if hasattr(obj, "items") and obj.__class__.__name__ == "EasyDict":
+                return {k: _to_plain(v) for k, v in obj.items()}
+            return obj
+
+        data_list = [_to_plain(x) for x in data_list]
         data_list_padded = self.collate_complex(data_list)
         batch = default_collate(data_list_padded)
         batch['size'] = len(data_list_padded)

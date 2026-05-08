@@ -40,6 +40,100 @@ class ModelModule(pl.LightningModule):
 
         self.train_loss = None
 
+        def _get_hp(name, default=None):
+            if hasattr(self.run_args, name):
+                return getattr(self.run_args, name)
+            if hasattr(self.model_args, "train") and hasattr(self.model_args.train, name):
+                return getattr(self.model_args.train, name)
+            return default
+
+        # Label standardization (z-score)
+        self.standardize_label = bool(_get_hp("standardize_label", False))
+        self.label_stats_from_data = bool(_get_hp("label_stats_from_data", False))
+        self.label_mean = float(_get_hp("label_mean", 0.0))
+        self.label_std = float(_get_hp("label_std", 1.0))
+        self._label_stats_logged = False
+
+        # Auxiliary physics loss weight scheduling (warmup + decay)
+        self.physics_aux_max_weight = float(_get_hp("physics_aux_max_weight", 0.0))
+        self.physics_aux_warmup_epochs = int(_get_hp("physics_aux_warmup_epochs", 0))
+        self.physics_aux_decay_epochs = int(_get_hp("physics_aux_decay_epochs", 0))
+        self.physics_aux_min_weight = float(_get_hp("physics_aux_min_weight", 0.0))
+
+        self.main_loss_type = str(_get_hp("main_loss_type", "mse")).lower()
+        self.huber_delta = float(_get_hp("huber_delta", 2.0))
+        self.physics_aux_normalize = bool(_get_hp("physics_aux_normalize", True))
+        self.physics_aux_clip = float(_get_hp("physics_aux_clip", 0.0))
+        self.physics_aux_stop_grad = bool(_get_hp("physics_aux_stop_grad", False))
+        self.physics_aux_start_epoch = int(_get_hp("physics_aux_start_epoch", 0))
+        self.physics_aux_prob = float(_get_hp("physics_aux_prob", 1.0))
+        self.physics_aux_terms = _get_hp("physics_aux_terms", None)
+        if self.physics_aux_terms is not None:
+            if isinstance(self.physics_aux_terms, str):
+                self.physics_aux_terms = [self.physics_aux_terms]
+            self.physics_aux_terms = [str(x) for x in list(self.physics_aux_terms)]
+
+    def on_fit_start(self) -> None:
+        if not self.standardize_label:
+            return
+        if not self.label_stats_from_data:
+            return
+        if self.trainer is None or self.trainer.datamodule is None:
+            return
+        dm = self.trainer.datamodule
+        if not hasattr(dm, "train_dataset") or dm.train_dataset is None:
+            return
+
+        ys = []
+        for i in range(len(dm.train_dataset)):
+            item = dm.train_dataset[i]
+            if isinstance(item, dict) and "labels" in item:
+                y = item["labels"]
+            elif isinstance(item, dict) and "label" in item:
+                y = item["label"]
+            else:
+                continue
+            try:
+                ys.append(float(y))
+            except Exception:
+                try:
+                    ys.append(float(y.item()))
+                except Exception:
+                    continue
+
+        if len(ys) == 0:
+            return
+
+        y_t = torch.tensor(ys, dtype=torch.float32)
+        mean = float(y_t.mean().item())
+        std = float(y_t.std(unbiased=False).clamp_min(1e-8).item())
+        self.label_mean = mean
+        self.label_std = std
+        # NOTE: Lightning forbids `self.log()` inside `on_fit_start`; we will log once in the first training step.
+
+    def _physics_aux_weight(self) -> float:
+        """Warm up to max, then linearly decay to min."""
+        e = int(self.current_epoch)
+        if self.physics_aux_max_weight <= 0:
+            return 0.0
+        if self.physics_aux_warmup_epochs > 0 and e < self.physics_aux_warmup_epochs:
+            # Linear warmup from 0 -> max
+            return float(self.physics_aux_max_weight * (e + 1) / float(self.physics_aux_warmup_epochs))
+        # If decay is disabled, keep a constant weight at max (after warmup).
+        # Returning min_weight here would silently disable the aux loss for common
+        # configs where min_weight defaults to 0.
+        if self.physics_aux_decay_epochs <= 0:
+            return float(self.physics_aux_max_weight)
+        t = min(1.0, (e - self.physics_aux_warmup_epochs) / float(self.physics_aux_decay_epochs))
+        return float(self.physics_aux_max_weight + t * (self.physics_aux_min_weight - self.physics_aux_max_weight))
+
+    def _main_loss(self, pred, y):
+        if self.l_type != 'regression':
+            return get_loss(self.l_type, pred, y, reduction='mean')
+        if self.main_loss_type == 'huber' or self.main_loss_type == 'smoothl1':
+            return F.huber_loss(pred, y, delta=self.huber_delta, reduction='mean')
+        return F.mse_loss(pred, y, reduction='mean')
+
     def get_progress_bar_dict(self):
         tqdm_dict = super().get_progress_bar_dict()
         tqdm_dict.pop('v_num', None)
@@ -116,12 +210,77 @@ class ModelModule(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         y = batch['labels']
-        pred = self.model(batch, self.data_args.strategy)
-        # print(y.shape, pred.shape)
-        loss = get_loss(self.l_type, pred, y, reduction='mean')
-        # if torch.isnan(loss).any():
-        #     print("Found nan in loss!", input)
-        #     exit()
+        if self.standardize_label and self.label_stats_from_data and (not self._label_stats_logged):
+            self.log("train/label_mean", float(self.label_mean), batch_size=self.batch_size, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+            self.log("train/label_std", float(self.label_std), batch_size=self.batch_size, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
+            self._label_stats_logged = True
+        if self.standardize_label:
+            y = (y - self.label_mean) / (self.label_std + 1e-8)
+        output = self.model(batch, self.data_args.strategy)
+        if isinstance(output, dict):
+            pred = output['pred']
+            pred_for_loss = pred
+            if self.standardize_label:
+                pred_for_loss = (pred - self.label_mean) / (self.label_std + 1e-8)
+            # Basic ΔG loss
+            main_loss = self._main_loss(pred_for_loss, y)
+            loss = main_loss
+            
+            # Physics Decomposition Loss (Auxiliary)
+            if 'physics_targets' in batch:
+                physics_loss = 0
+                physics_terms = 0
+                targets = batch['physics_targets']
+                physics_pred = output['physics']
+                allowed_terms = None
+                if self.physics_aux_terms is not None:
+                    allowed_terms = set(self.physics_aux_terms)
+                if self.physics_aux_stop_grad:
+                    pooled = output.get('pooled', None)
+                    if pooled is None:
+                        raise RuntimeError("physics_aux_stop_grad requires model to return 'pooled' in output dict")
+                    pooled = pooled.detach()
+                    physics_pred = {name: self.model.physics_heads[name](pooled).squeeze(-1) for name in self.model.physics_names}
+
+                for name in physics_pred:
+                    if allowed_terms is not None and name not in allowed_terms:
+                        continue
+                    if name in targets:
+                        # Use MSE loss for physical property regression
+                        p_loss = F.mse_loss(physics_pred[name], targets[name].float())
+                        physics_loss += p_loss
+                        physics_terms += 1
+                        self.log(f"train/loss_{name}", p_loss, batch_size=self.batch_size, on_step=True, sync_dist=True)
+
+                if physics_terms > 0:
+                    physics_loss = physics_loss / float(physics_terms)
+
+                if self.physics_aux_normalize:
+                    denom = main_loss.detach().clamp_min(1e-8)
+                    physics_loss = physics_loss / denom
+
+                if self.physics_aux_clip and self.physics_aux_clip > 0:
+                    physics_loss = physics_loss.clamp(max=self.physics_aux_clip)
+
+                w = self._physics_aux_weight()
+                if int(self.current_epoch) < int(self.physics_aux_start_epoch):
+                    w = 0.0
+                if self.physics_aux_prob < 1.0:
+                    if float(torch.rand(1, device=pred.device).item()) > float(self.physics_aux_prob):
+                        w = 0.0
+                self.log("train/physics_aux_weight", w, batch_size=self.batch_size, on_step=True, sync_dist=True)
+                self.log("train/physics_aux_loss", physics_loss, batch_size=self.batch_size, on_step=True, sync_dist=True)
+                self.log("train/main_loss", main_loss, batch_size=self.batch_size, on_step=True, sync_dist=True)
+                loss = loss + w * physics_loss
+            
+            # Log individual physical components for monitoring
+            for name, val in output['physics'].items():
+                self.log(f"train/physics_{name}_val", val.mean(), batch_size=self.batch_size, on_step=True, sync_dist=True)
+            self.log("train/main_refinement", output['main_refinement'].mean(), batch_size=self.batch_size, on_step=True, sync_dist=True)
+        else:
+            pred = output
+            loss = self._main_loss(pred, y)
+
         self.train_loss = loss.detach()
         self.log("train_loss", float(self.train_loss), batch_size=self.batch_size, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
         return loss
@@ -132,12 +291,17 @@ class ModelModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         y = batch['labels']
-        pred = self.model(batch, self.data_args.strategy)
+        output = self.model(batch, self.data_args.strategy)
+        if isinstance(output, dict):
+            pred = output['pred']
+        else:
+            pred = output
+
         val_loss = get_loss(self.l_type, pred, y, reduction='mean')
         self.scalar_accum.add(name='val_loss', value=val_loss, batchsize=self.batch_size, mode='mean')
         self.log("val_loss_step", val_loss, batch_size=self.batch_size, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
 
-        for  y_true, y_pred in zip(batch['labels'], pred):
+        for y_true, y_pred in zip(batch['labels'], pred):
             result = {}
             result['y_true'] = y_true.item()
             result['y_pred'] = y_pred.item()
@@ -146,7 +310,6 @@ class ModelModule(pl.LightningModule):
     
     def on_validation_epoch_end(self):
         results = pd.DataFrame(self.results)
-        # print("Validation:", results)
         if self.output_dir is not None:
             results.to_csv(os.path.join(self.output_dir, f'results_{self.valid_it}.csv'), index=False)
         y_pred = np.array(results[f'y_pred'])
@@ -164,7 +327,6 @@ class ModelModule(pl.LightningModule):
     
         val_loss = rmse_all * rmse_all
         self.log('val_loss', val_loss, batch_size=self.batch_size, on_epoch=True, sync_dist=True)
-        # Trigger scheduler
         self.valid_it += 1
         return val_loss
 
@@ -174,7 +336,12 @@ class ModelModule(pl.LightningModule):
         
     def test_step(self, batch, batch_idx):
         y = batch['labels']
-        pred = self.model(batch, self.data_args.strategy)
+        output = self.model(batch, self.data_args.strategy)
+        if isinstance(output, dict):
+            pred = output['pred']
+        else:
+            pred = output
+
         test_loss = get_loss(self.l_type, pred, y, reduction='mean')
         self.scalar_accum.add(name='loss', value = test_loss, batchsize=self.batch_size, mode='mean')
         self.log("test_loss_step", test_loss, batch_size=self.batch_size, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)

@@ -52,10 +52,23 @@ train:
   val_freq: 1000
   seed: 2024
   max_grad_norm: 100.0
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: huber
+  huber_delta: 2.0
+  physics_aux_max_weight: 0.02
+  physics_aux_warmup_epochs: 10
+  physics_aux_decay_epochs: 0
+  physics_aux_min_weight: 0.0
+  physics_aux_normalize: false
+  physics_aux_clip: 1.0
+  physics_aux_stop_grad: true
+  physics_aux_start_epoch: 15
+  physics_aux_prob: 0.3
   optimizer:
     type: adam
-    lr: 4.e-5
-    weight_decay: 0.0
+    lr: 1.e-4
+    weight_decay: 1.e-2
     beta1: 0.9
     beta2: 0.999
   scheduler:

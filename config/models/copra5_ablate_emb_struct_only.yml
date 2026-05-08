@@ -4,13 +4,9 @@ model:
   esm_type: 650M
   embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_PRA310'
   seq_prot_models:
-    - esm2
-    - prott5
-    - saprot
+    - none
   seq_rna_models:
-    - rinalmo
-    - rna_msm
-    - rna_fm
+    - none
   str_prot_models:
     - esm_if1
     - protrek
@@ -52,10 +48,19 @@ train:
   val_freq: 1000
   seed: 2024
   max_grad_norm: 100.0
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: huber
+  huber_delta: 2.0
+  physics_aux_max_weight: 0.2
+  physics_aux_warmup_epochs: 3
+  physics_aux_decay_epochs: 10
+  physics_aux_min_weight: 0.0
+  physics_aux_normalize: true
   optimizer:
     type: adam
-    lr: 4.e-5
-    weight_decay: 0.0
+    lr: 1.e-4
+    weight_decay: 1.e-2
     beta1: 0.9
     beta2: 0.999
   scheduler:

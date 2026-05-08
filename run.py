@@ -4,6 +4,7 @@ os.environ["NUMEXPR_MAX_THREADS"] = '56'
 os.environ["MKL_NUM_THREADS"] = '4'
 os.environ["OMP_NUM_THREADS"] = '4'
 import fire
+import pathlib
 from pathlib import Path
 import pandas as pd
 
@@ -29,6 +30,8 @@ def parse_yaml(yaml_dir):
         # args = Namespace(**config_dict)
     return config_dict
 def init_pytorch_settings():
+    if hasattr(torch.serialization, 'add_safe_globals'):
+        torch.serialization.add_safe_globals([pathlib.PosixPath, EasyDict])
     # Multiprocess Setting to speedup dataloader
     torch.multiprocessing.set_start_method('forkserver')
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -113,8 +116,8 @@ class LightningRunner(object):
                         save_top_k=1,     # keep only best + last
                     ),
                 ],
-                # gradient_clip_val=self.model_args.train.max_grad_norm if self.model_args.train.max_grad_norm is not None else None,
-                # gradient_clip_algorithm='norm' if self.model_args.train.max_grad_norm is not None else None,
+                gradient_clip_val=self.model_args.train.max_grad_norm if self.model_args.train.max_grad_norm is not None else None,
+                gradient_clip_algorithm='norm' if self.model_args.train.max_grad_norm is not None else None,
                 strategy=strategy,
                 log_every_n_steps=3,
             )

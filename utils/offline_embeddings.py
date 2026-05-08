@@ -25,7 +25,7 @@ class OfflineEmbeddingSpec:
     protein_sequence_models: Tuple[str, str, str] = ("esm2", "prott5", "saprot")
     protein_structure_models: Tuple[str, str, str] = ("esm_if1", "protbert", "protrek")
     rna_sequence_models: Tuple[str, str, str] = ("rinalmo", "rna_fm", "rna_msm")
-    rna_structure_models: Tuple[str, str, str] = ("ERNIE-RNA", "rhofold", "rnabert")
+    rna_structure_models: Tuple[str, str, str] = ("ernie_rna", "rhofold", "rnabert")
 
     def file_path(self, group: str, model: str, pdb_id: str, entity: str, chain_id: str) -> str:
         fname = "{}_{}_{}.pt".format(pdb_id, entity, chain_id)

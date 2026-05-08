@@ -1,4 +1,4 @@
-output_dir: './outputs/PRA310_csan'
+output_dir: '/media/SSD0/csd/lrg/outputs/PRA201_test'
 gpus:
   - 0
 
@@ -23,11 +23,21 @@ ckpts:
   # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-21-01-19-57/log_fold_2/checkpoint/best-epoch=9-val_loss=1.542.ckpt
   # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-21-01-39-17/log_fold_3/checkpoint/best-epoch=20-val_loss=1.956.ckpt
   # - /data/lrg/CoPRA/outputs/PRA310_csan/ckpt=null_batch=64_agb=8_lr=4e-5_wd=0_2026-03-21-01-40-10/log_fold_4/checkpoint/best-epoch=41-val_loss=1.975.ckpt
-  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=1_lr=4e-5_wd=0_2026-03-21-09-37-36/log_fold_0/checkpoint/best-epoch=16-val_loss=2.275.ckpt
-  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=8_lr=4e-5_wd=0_2026-03-21-09-35-48/log_fold_1/checkpoint/best-epoch=24-val_loss=1.145.ckpt
-  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-21-09-37-00/log_fold_2/checkpoint/best-epoch=10-val_loss=1.138.ckpt
-  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=8_lr=4e-5_wd=0_2026-03-21-09-35-48/log_fold_3/checkpoint/best-epoch=11-val_loss=1.972.ckpt
-  - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-21-09-36-27/log_fold_4/checkpoint/best-epoch=25-val_loss=1.816.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=1_lr=4e-5_wd=0_2026-03-21-09-37-36/log_fold_0/checkpoint/best-epoch=16-val_loss=2.275.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=8_lr=4e-5_wd=0_2026-03-21-09-35-48/log_fold_1/checkpoint/best-epoch=24-val_loss=1.145.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=2_lr=4e-5_wd=0_2026-03-21-09-37-00/log_fold_2/checkpoint/best-epoch=10-val_loss=1.138.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=8_lr=4e-5_wd=0_2026-03-21-09-35-48/log_fold_3/checkpoint/best-epoch=11-val_loss=1.972.ckpt
+  # - /data/lrg/CoPRA/outputs/PRA210_csan/ckpt=null_agb=4_lr=4e-5_wd=0_2026-03-21-09-36-27/log_fold_4/checkpoint/best-epoch=25-val_loss=1.816.ckpt
+  # - /media/SSD0/csd/lrg/outputs/PRA310/copra8_2026-05-04-17-58-25/log_fold_0/checkpoint/best-epoch=12-val_loss=2.232.ckpt
+  # - /media/SSD0/csd/lrg/outputs/PRA310/copra8_2026-05-04-17-58-25/log_fold_1/checkpoint/best-epoch=9-val_loss=1.375.ckpt
+  # - /media/SSD0/csd/lrg/outputs/PRA310/copra8_2026-05-04-17-58-25/log_fold_2/checkpoint/best-epoch=15-val_loss=1.399.ckpt
+  # - /media/SSD0/csd/lrg/outputs/PRA310/copra4_2026-05-04-17-58-10/log_fold_3/checkpoint/best-epoch=11-val_loss=2.173.ckpt
+  # - /media/SSD0/csd/lrg/outputs/PRA310/copra5_2026-05-04-17-57-09/log_fold_4/checkpoint/best-epoch=12-val_loss=1.909.ckpt
+  - /media/SSD0/csd/lrg/outputs/PRA310_ablation/baseline_2026-05-06-10-54-24/log_fold_0/checkpoint/best-epoch=11-val_loss=2.190.ckpt
+  - /media/SSD0/csd/lrg/outputs/PRA310_ablation/struct_off_2026-05-06-00-28-42/log_fold_1/checkpoint/best-epoch=7-val_loss=1.328.ckpt
+  - /media/SSD0/csd/lrg/outputs/PRA310_ablation/seq_off_2026-05-06-00-29-49/log_fold_2/checkpoint/best-epoch=7-val_loss=1.361.ckpt
+  - /media/SSD0/csd/lrg/outputs/PRA310_ablation/baseline_2026-05-06-16-14-12/log_fold_3/checkpoint/best-epoch=7-val_loss=2.133.ckpt
+  - /media/SSD0/csd/lrg/outputs/PRA310_ablation/struct_off_2026-05-06-00-28-42/log_fold_4/checkpoint/best-epoch=23-val_loss=1.777.ckpt
 run_name: 'test_best_'
 wandb: False
 num_folds: 5

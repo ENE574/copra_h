@@ -1,12 +1,12 @@
 epochs: 20
 patience: 150
-output_dir: '/media/SSD0/csd/lrg/outputs/PRA310_ablation'
+output_dir: '/media/SSD0/csd/lrg/outputs/PRA201_ablation'
 gpus:
-  - 0
+  - 3
 
 ckpt: null
 
-run_name: 'phys_off_'
+run_name: 'struc_off_'
 wandb: False
 num_folds: 5
 

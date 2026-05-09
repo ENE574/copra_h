@@ -121,9 +121,13 @@ class ESM2RiNALMo(nn.Module):
                  use_offline_embeddings=False,
                  offline_dim=1280,
                  main_refinement_scale=0.1,
+                 ablate_interactions=None,
+                 ablate_fusion_all=False,
                  **kwargs
                  ):
         super(ESM2RiNALMo, self).__init__()
+        self.ablate_interactions = ablate_interactions or []
+        self.ablate_fusion_all = ablate_fusion_all
         self.use_offline_embeddings = use_offline_embeddings
         if not self.use_offline_embeddings:
             self.esm, esm_feat_size = load_esm(esm_type)
@@ -435,22 +439,46 @@ class ESM2RiNALMo(nn.Module):
             _, rna_pad_mask = _pad_list(rna_seq_list["rinalmo"], max_rna)
 
             # 1) within-group fusion
-            prot_seq = self._offline_group_fusion("prot_seq", prot_seq_3)
-            prot_struct = self._offline_group_fusion("prot_struct", prot_struct_3)
-            rna_seq = self._offline_group_fusion("rna_seq", rna_seq_3)
-            rna_struct = self._offline_group_fusion("rna_struct", rna_struct_3)
+            if self.ablate_fusion_all:
+                prot_seq = torch.mean(torch.stack(prot_seq_3, dim=0), dim=0)
+                prot_struct = torch.mean(torch.stack(prot_struct_3, dim=0), dim=0)
+                rna_seq = torch.mean(torch.stack(rna_seq_3, dim=0), dim=0)
+                rna_struct = torch.mean(torch.stack(rna_struct_3, dim=0), dim=0)
+            else:
+                prot_seq = self._offline_group_fusion("prot_seq", prot_seq_3)
+                prot_struct = self._offline_group_fusion("prot_struct", prot_struct_3)
+                rna_seq = self._offline_group_fusion("rna_seq", rna_seq_3)
+                rna_struct = self._offline_group_fusion("rna_struct", rna_struct_3)
 
             # 2) within-entity bidirectional interaction
-            prot_struct2, _ = self.prot_seq_to_struct(query=prot_struct, key=prot_seq, value=prot_seq, key_padding_mask=prot_pad_mask)
-            prot_seq2, _ = self.prot_struct_to_seq(query=prot_seq, key=prot_struct, value=prot_struct, key_padding_mask=prot_pad_mask)
-            rna_struct2, _ = self.rna_seq_to_struct(query=rna_struct, key=rna_seq, value=rna_seq, key_padding_mask=rna_pad_mask)
-            rna_seq2, _ = self.rna_struct_to_seq(query=rna_seq, key=rna_struct, value=rna_struct, key_padding_mask=rna_pad_mask)
-            prot_entity = prot_seq2 + prot_struct2
-            rna_entity = rna_seq2 + rna_struct2
+            if self.ablate_fusion_all:
+                prot_entity = prot_seq + prot_struct
+                rna_entity = rna_seq + rna_struct
+            elif len(getattr(self, "_enabled_offline_models", {}).get("prot_struct", set())) == 0:
+                prot_entity = prot_seq
+            elif len(getattr(self, "_enabled_offline_models", {}).get("prot_seq", set())) == 0:
+                prot_entity = prot_struct
+            else:
+                prot_struct2, _ = self.prot_seq_to_struct(query=prot_struct, key=prot_seq, value=prot_seq, key_padding_mask=prot_pad_mask)
+                prot_seq2, _ = self.prot_struct_to_seq(query=prot_seq, key=prot_struct, value=prot_struct, key_padding_mask=prot_pad_mask)
+                prot_entity = prot_seq2 + prot_struct2
+
+            if len(getattr(self, "_enabled_offline_models", {}).get("rna_struct", set())) == 0:
+                rna_entity = rna_seq
+            elif len(getattr(self, "_enabled_offline_models", {}).get("rna_seq", set())) == 0:
+                rna_entity = rna_struct
+            else:
+                rna_struct2, _ = self.rna_seq_to_struct(query=rna_struct, key=rna_seq, value=rna_seq, key_padding_mask=rna_pad_mask)
+                rna_seq2, _ = self.rna_struct_to_seq(query=rna_seq, key=rna_struct, value=rna_struct, key_padding_mask=rna_pad_mask)
+                rna_entity = rna_seq2 + rna_struct2
 
             # 3) cross-entity bidirectional interaction (per complex; batch size is N_complex)
-            prot_final, _ = self.prot_to_rna(query=prot_entity, key=rna_entity, value=rna_entity, key_padding_mask=rna_pad_mask)
-            rna_final, _ = self.rna_to_prot(query=rna_entity, key=prot_entity, value=prot_entity, key_padding_mask=prot_pad_mask)
+            if self.ablate_fusion_all or "cross_entity" in self.ablate_interactions:
+                prot_final = prot_entity
+                rna_final = rna_entity
+            else:
+                prot_final, _ = self.prot_to_rna(query=prot_entity, key=rna_entity, value=rna_entity, key_padding_mask=rna_pad_mask)
+                rna_final, _ = self.rna_to_prot(query=rna_entity, key=prot_entity, value=prot_entity, key_padding_mask=prot_pad_mask)
 
             # Build residue-space complex embedding: [prot residues][rna residues], padded to max_len from structure batch
             max_len = input['pos_atoms'].shape[1]

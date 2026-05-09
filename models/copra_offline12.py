@@ -29,8 +29,10 @@ class CopraOffline12(nn.Module):
                  d_model=512, 
                  num_heads=8, 
                  output_dim=1,
+                 ablate=None,
                  **kwargs):
         super().__init__()
+        self.ablate = ablate or []
         
         # Dimensions of 12 models
         self.dims = {
@@ -109,19 +111,35 @@ class CopraOffline12(nn.Module):
         
         # 3. Intra-Entity Cross Interaction (Sequence <-> Structure)
         # Prot
-        p_seq_inter = self.intra_entity_attn['prot_seq_to_str'](p_seq_f, [p_str_f], p_mask)
-        p_str_inter = self.intra_entity_attn['prot_str_to_seq'](p_str_f, [p_seq_f], p_mask)
+        if 'prot_seq' in self.ablate:
+            p_entity = p_str_f
+        elif 'prot_struct' in self.ablate:
+            p_entity = p_seq_f
+        else:
+            p_seq_inter = self.intra_entity_attn['prot_seq_to_str'](p_seq_f, [p_str_f], p_mask)
+            p_str_inter = self.intra_entity_attn['prot_str_to_seq'](p_str_f, [p_seq_f], p_mask)
+            p_entity = p_seq_inter + p_str_inter
+            
         # RNA
-        r_seq_inter = self.intra_entity_attn['rna_seq_to_str'](r_seq_f, [r_str_f], r_mask)
-        r_str_inter = self.intra_entity_attn['rna_str_to_seq'](r_str_f, [r_seq_f], r_mask)
-        
-        # Entity representation (simple add)
-        p_entity = p_seq_inter + p_str_inter
-        r_entity = r_seq_inter + r_str_inter
+        if 'rna_seq' in self.ablate:
+            r_entity = r_str_f
+        elif 'rna_struct' in self.ablate:
+            r_entity = r_seq_f
+        else:
+            r_seq_inter = self.intra_entity_attn['rna_seq_to_str'](r_seq_f, [r_str_f], r_mask)
+            r_str_inter = self.intra_entity_attn['rna_str_to_seq'](r_str_f, [r_seq_f], r_mask)
+            r_entity = r_seq_inter + r_str_inter
         
         # 4. Cross-Entity Interaction (Prot <-> RNA)
-        p_final = self.cross_entity_attn['prot_to_rna'](p_entity, [r_entity], r_mask)
-        r_final = self.cross_entity_attn['rna_to_prot'](r_entity, [p_entity], p_mask)
+        if 'prot' in self.ablate:
+            p_final = p_entity
+            r_final = r_entity
+        elif 'rna' in self.ablate:
+            p_final = p_entity
+            r_final = r_entity
+        else:
+            p_final = self.cross_entity_attn['prot_to_rna'](p_entity, [r_entity], r_mask)
+            r_final = self.cross_entity_attn['rna_to_prot'](r_entity, [p_entity], p_mask)
         
         # 5. Global Pooling & Prediction
         # Simple mean pooling over tokens

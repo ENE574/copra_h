@@ -4,6 +4,7 @@ from torch.utils.data import Dataset
 import pandas as pd
 from esm.data import Alphabet as ESMAlphabet
 import torch
+from utils.torch_compat import torch_load_compat
 from tqdm import tqdm
 from rinalmo.data.constants import *
 from rinalmo.data.alphabet import Alphabet
@@ -16,7 +17,6 @@ from typing import Optional, Dict
 from easydict import EasyDict
 from data.protein.residue_constants import restype_order, restype_num
 from data.rna.base_constants import RNA_NUCLEOTIDES
-from pathlib import Path
 
 na_alphabet_config = {
     "standard_tkns": RNA_TOKENS,
@@ -80,6 +80,10 @@ class StructureDataset(Dataset):
                  protein_embedding_model: str = "esm2",
                  rna_embedding_model: str = "rinalmo",
                  embedding_strict: bool = True,
+                 use_pyrosetta_physics: bool = False,
+                 pyrosetta_scorefxn: str = "ref2015",
+                 pyrosetta_init_extra: str = "",
+                 physics_targets_csv: Optional[str] = None,
                  **kwargs
                  ):
         self.data_root = data_root
@@ -112,11 +116,47 @@ class StructureDataset(Dataset):
         self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1", "protrek", "protbert"])
         self.str_rna_models = _ensure_list(str_rna_models, ["rna_ernie", "rnabert", "rhofold"])
         self.embedding_strict = embedding_strict
-        
+        self.use_pyrosetta_physics = bool(use_pyrosetta_physics)
+        self.pyrosetta_scorefxn = str(pyrosetta_scorefxn)
+        self.pyrosetta_init_extra = str(pyrosetta_init_extra)
+        self._pyrosetta_memo: dict = {}
+        self.physics_targets_csv = physics_targets_csv
+        self._csv_physics_by_id: Optional[Dict[str, Dict[str, torch.Tensor]]] = None
+        if self.physics_targets_csv:
+            if not os.path.isfile(self.physics_targets_csv):
+                raise FileNotFoundError(f"physics_targets_csv not found: {self.physics_targets_csv}")
+            from data.foldx_physics import load_physics_targets_csv
+
+            self._csv_physics_by_id = load_physics_targets_csv(self.physics_targets_csv)
+            if self.use_pyrosetta_physics:
+                print(
+                    "[INFO] physics_targets_csv is set; using CSV labels and skipping PyRosetta scoring."
+                )
+            self.use_pyrosetta_physics = False
+
+        if self.use_pyrosetta_physics:
+            from data.pyrosetta_physics import init_pyrosetta, pyrosetta_available
+
+            if not pyrosetta_available():
+                raise ImportError(
+                    "use_pyrosetta_physics=True but PyRosetta is not importable. "
+                    "Install PyRosetta in this environment (https://www.pyrosetta.org/downloads)."
+                )
+            init_pyrosetta(self.pyrosetta_init_extra)
+        elif self._csv_physics_by_id is None:
+            from data.pyrosetta_physics import warn_zero_pia_targets_when_no_pyrosetta
+
+            warn_zero_pia_targets_when_no_pyrosetta()
+
         self.transform = get_transform(transform)
-        
+
         self.load_data()
-        
+
+    def _resolve_pdb_path(self, structure_id: str) -> str:
+        if self.mut:
+            return os.path.join(self.data_root, structure_id.split("_")[0] + ".pdb")
+        return os.path.join(self.data_root, f"{structure_id}.pdb")
+
     def load_data(self):
         self.data = []
         for i, row in tqdm(self.df.iterrows(), total=len(self.df)):
@@ -127,12 +167,9 @@ class StructureDataset(Dataset):
             if self.diskcache is None or structure_id not in self.diskcache:
                 prot_chains = [c.strip() for c in row[self.col_prot_chain].split(',')]
                 na_chains = [c.strip() for c in row[self.col_na_chain].split(',')]
-                if self.mut:
-                    pdb_path = os.path.join(self.data_root, structure_id.split('_')[0]+'.pdb')
-                else:
-                    pdb_path = os.path.join(self.data_root, structure_id+'.pdb')
+                pdb_path = self._resolve_pdb_path(structure_id)
 
-                label = row[self.col_label]
+                label = float(row[self.col_label])
                 
                 cplx = _process_structure(pdb_path, structure_id, prot_chains, na_chains)
 
@@ -171,73 +208,29 @@ class StructureDataset(Dataset):
                 mask = (gpu_masks[:, None, :, None] * gpu_masks[None, :, None, :]).reshape(L, L, -1)
                 distance_map[~mask] = torch.inf
                 atom_min_dist = torch.min(distance_map, dim=-1)[0]
-                
-                # --- Heuristic Physical Properties Calculation (interface-aware) ---
-                # NOTE:
-                #   We only consider protein-RNA interface contacts (exclude intra-protein / intra-RNA).
-                #   These are weak labels for auxiliary supervision.
-                
-                identifier = cplx["identifier"].to(atom_min_dist.device)
-                prot_idx = torch.nonzero(identifier == 0, as_tuple=False).flatten()
-                rna_idx = torch.nonzero(identifier == 1, as_tuple=False).flatten()
 
-                contact_thr = 4.5
-                if len(prot_idx) == 0 or len(rna_idx) == 0:
-                    contact_intensity = atom_min_dist.new_tensor(0.0)
-                    electro_score = atom_min_dist.new_tensor(0.0)
-                    hydrophobic_score = atom_min_dist.new_tensor(0.0)
-                    stacking_score = atom_min_dist.new_tensor(0.0)
-                else:
-                    interface_min_dist = atom_min_dist.index_select(0, prot_idx).index_select(1, rna_idx)
-                    interface_contacts = (interface_min_dist < contact_thr)
+                if self._csv_physics_by_id is not None:
+                    row = self._csv_physics_by_id.get(structure_id)
+                    if row is None:
+                        from data.pyrosetta_physics import zero_physics_targets
 
-                    # 1) Contact intensity: fraction of protein-RNA residue pairs in contact.
-                    contact_intensity = interface_contacts.float().mean()
-
-                    # Interface protein residues: any contact to RNA
-                    prot_iface_mask = interface_contacts.any(dim=1)
-                    prot_iface_restypes = cplx["restype"].index_select(0, prot_idx)[prot_iface_mask]
-
-                    if prot_iface_restypes.numel() == 0:
-                        electro_score = atom_min_dist.new_tensor(0.0)
-                        hydrophobic_score = atom_min_dist.new_tensor(0.0)
-                        stacking_score = atom_min_dist.new_tensor(0.0)
+                        physics_targets = zero_physics_targets()
                     else:
-                        # Residue type ids come from data.protein.residue_constants.restype_order
-                        basic_ids = prot_iface_restypes.new_tensor([
-                            restype_order["R"], restype_order["K"], restype_order["H"]
-                        ])
-                        acidic_ids = prot_iface_restypes.new_tensor([
-                            restype_order["D"], restype_order["E"]
-                        ])
-                        aromatic_ids = prot_iface_restypes.new_tensor([
-                            restype_order["F"], restype_order["W"], restype_order["Y"]
-                        ])
-                        hydrophobic_ids = prot_iface_restypes.new_tensor([
-                            restype_order["A"], restype_order["V"], restype_order["I"], restype_order["L"],
-                            restype_order["M"], restype_order["F"], restype_order["W"], restype_order["Y"],
-                            restype_order["P"], restype_order["C"]
-                        ])
+                        physics_targets = {k: v.clone() for k, v in row.items()}
+                elif self.use_pyrosetta_physics:
+                    from data.pyrosetta_physics import compute_physics_targets_tensor_cached
 
-                        basic_frac = torch.isin(prot_iface_restypes, basic_ids).float().mean()
-                        acidic_frac = torch.isin(prot_iface_restypes, acidic_ids).float().mean()
-                        aromatic_frac = torch.isin(prot_iface_restypes, aromatic_ids).float().mean()
-                        hydrophobic_frac = torch.isin(prot_iface_restypes, hydrophobic_ids).float().mean()
+                    physics_targets = compute_physics_targets_tensor_cached(
+                        pdb_path,
+                        self._pyrosetta_memo,
+                        scorefxn_name=self.pyrosetta_scorefxn,
+                        init_extra_options=self.pyrosetta_init_extra,
+                    )
+                else:
+                    from data.pyrosetta_physics import zero_physics_targets
 
-                        # 2) Electro: more basic than acidic at interface should favor binding to RNA (negatively charged)
-                        electro_score = contact_intensity * (basic_frac - acidic_frac)
-                        # 3) Hydrophobic: interface hydrophobic enrichment
-                        hydrophobic_score = contact_intensity * hydrophobic_frac
-                        # 4) Stacking: aromatic enrichment (proxy for pi-stacking propensity)
-                        stacking_score = contact_intensity * aromatic_frac
+                    physics_targets = zero_physics_targets()
 
-                physics_targets = {
-                    "contact": contact_intensity,
-                    "electro": electro_score,
-                    "hydrophobic": hydrophobic_score,
-                    "stacking": stacking_score,
-                }
-                
                 max_prot_length = 0
                 max_na_length = 0
                 for prot_seq in cplx.prot_seqs:
@@ -301,6 +294,30 @@ class StructureDataset(Dataset):
                         data["prot_chain_ids"] = []
                     if "rna_chain_ids" not in data:
                         data["rna_chain_ids"] = []
+                # Always refresh label from the current CSV row (diskcache may hold old dtypes).
+                data["labels"] = float(row[self.col_label])
+                if self._csv_physics_by_id is not None:
+                    row = self._csv_physics_by_id.get(structure_id)
+                    if row is None:
+                        from data.pyrosetta_physics import zero_physics_targets
+
+                        data["physics_targets"] = zero_physics_targets()
+                    else:
+                        data["physics_targets"] = {k: v.clone() for k, v in row.items()}
+                elif self.use_pyrosetta_physics:
+                    from data.pyrosetta_physics import compute_physics_targets_tensor_cached
+
+                    pdb_path = self._resolve_pdb_path(structure_id)
+                    data["physics_targets"] = compute_physics_targets_tensor_cached(
+                        pdb_path,
+                        self._pyrosetta_memo,
+                        scorefxn_name=self.pyrosetta_scorefxn,
+                        init_extra_options=self.pyrosetta_init_extra,
+                    )
+                else:
+                    from data.pyrosetta_physics import zero_physics_targets
+
+                    data["physics_targets"] = zero_physics_targets()
                 self.data.append(data)
     
     def __len__(self):
@@ -431,7 +448,7 @@ class CustomStructCollate(object):
                     if strict:
                         raise FileNotFoundError(f"Missing embedding: {path}")
                     return None
-                payload = torch.load(path, map_location="cpu")
+                payload = torch_load_compat(path, map_location="cpu")
                 token_embeddings = payload["token_embeddings"]
                 if token_embeddings.shape[0] != seq_len and strict:
                     raise ValueError(
@@ -613,7 +630,14 @@ class CustomStructCollate(object):
             batch['str_rna_embeddings'] = str_rna_batch
             batch['use_precomputed_embeddings'] = True
         batch['strategy'] = self.strategy
-        batch['labels'] = batch['labels'].float()
+        labs = batch["labels"]
+        if isinstance(labs, torch.Tensor):
+            batch["labels"] = labs.float().reshape(-1)
+        elif isinstance(labs, (list, tuple)):
+            # default_collate leaves a list when per-sample label dtypes differ (e.g. str vs float in CSV).
+            batch["labels"] = torch.tensor([float(x) for x in labs], dtype=torch.float32)
+        else:
+            batch["labels"] = torch.as_tensor(labs, dtype=torch.float32).reshape(-1)
 
         # Optional: attach offline embeddings (12 models, 4 groups) to the batch so the model
         # can bypass online ESM/RiNALMo forward.
@@ -651,7 +675,8 @@ class CustomStructCollate(object):
 
             # Important: keep the same iteration order as pad_for_berts (item -> chains)
             for item in data_list:
-                pdb_id = item["complex"]
+                # Prefer structure id (e.g. PDB_MUTATION for mut datasets) so offline .pt names match extract_features.
+                pdb_id = str(item.get("id", item.get("complex", "")))
                 prot_chain_ids = item.get("prot_chain_ids", [])
                 rna_chain_ids = item.get("rna_chain_ids", [])
 

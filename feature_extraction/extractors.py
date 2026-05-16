@@ -1,14 +1,18 @@
+import ast
 import json
 import os
 import pickle
 import shutil
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
+
+from utils.torch_compat import torch_load_compat
 
 
 def read_fasta(path: str) -> List[Tuple[str, str]]:
@@ -146,9 +150,99 @@ def _get_model_chain(pdb_path: Path, chain_id: str):
     return fallback
 
 
+def _protein_single_inputs_dir(output_dir: Path) -> Path:
+    """Dataset layout: {embedding_root}/inputs/protein_single/{stem}.fasta"""
+    return output_dir.resolve().parent.parent / "inputs" / "protein_single"
+
+
+def _mcsm_train_pdb_stem_from_protein_single_stem(stem: str) -> Optional[str]:
+    """
+    Basename used on disk for mCSM-style rows (``mutation_col`` set), aligned with
+    ``dataset_utils._mcsm_train_stem_pdb_candidates``: ``structure_key.split("_")[0]``
+    where ``structure_key`` is the part before ``_prot_`` in ``inputs/protein_single`` names.
+    """
+    if "_prot_" not in stem:
+        return None
+    complex_part = stem.rsplit("_prot_", 1)[0]
+    if not complex_part:
+        return None
+    return complex_part.split("_")[0]
+
+
+def _pdb_path_for_protein_single_stem(stem: str, pdb_files: List[Path]) -> Optional[Path]:
+    """
+    Resolve a ``protein_single`` FASTA stem to a structure file in ``pdb_files``.
+
+    1. Filenames like ``{stem}_rna_R.cif`` (prefix ``{stem}_rna_``).
+    2. Exact stem match (e.g. single-chain PDB named like the FASTA stem).
+    3. mCSM / mutant layout: FASTA stem ``{pdb}_{mutation...}_prot_{chain}`` maps to the same
+       basename as ``build_dataset_pdb_list`` / ``_mcsm_train_stem_pdb_candidates`` (first
+       ``_``-segment of the complex id before ``_prot_``, e.g. ``1ASY_D210A_prot_A`` -> ``1ASY``).
+    """
+    hits = [p for p in pdb_files if p.stem.startswith(stem + "_rna_")]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        return sorted(hits, key=lambda p: (len(p.stem), str(p)))[0]
+    for p in pdb_files:
+        if p.stem == stem:
+            return p
+    mcsm_stem = _mcsm_train_pdb_stem_from_protein_single_stem(stem)
+    if mcsm_stem:
+        complex_part = stem.rsplit("_prot_", 1)[0]
+        # Some datasets store one file per mutant row: stem equals full complex id.
+        if complex_part:
+            hits_row = [p for p in pdb_files if p.stem == complex_part]
+            if len(hits_row) == 1:
+                return hits_row[0]
+            if len(hits_row) > 1:
+                return sorted(
+                    hits_row, key=lambda p: (0 if p.suffix.lower() == ".pdb" else 1, str(p))
+                )[0]
+        hits_m = [p for p in pdb_files if p.stem == mcsm_stem]
+        if len(hits_m) == 1:
+            return hits_m[0]
+        if len(hits_m) > 1:
+            # Match ``build_dataset_pdb_list`` try-order: ``.pdb`` before ``.cif``.
+            return sorted(hits_m, key=lambda p: (0 if p.suffix.lower() == ".pdb" else 1, str(p)))[0]
+    return None
+
+
+def _protein_chain_from_single_stem(stem: str) -> Optional[str]:
+    if "_prot_" not in stem:
+        return None
+    return stem.rsplit("_prot_", 1)[-1]
+
+
+def _reference_seq_len_for_protein_single_stem(output_dir: Path, stem: str) -> Optional[int]:
+    d = _protein_single_inputs_dir(output_dir)
+    for suf in (".fasta", ".fa"):
+        fp = d / f"{stem}{suf}"
+        if fp.is_file():
+            try:
+                recs = read_fasta(str(fp))
+                if recs:
+                    return len(recs[0][1])
+            except Exception:
+                return None
+    return None
+
+
 def _get_reference_length(output_dir: Path, pdb_path: Path, chain_id: str) -> Optional[int]:
     """Try to read reference fasta length for pdb+chain from inputs/protein_single."""
     inputs_dir = output_dir.parent.parent / "inputs" / "protein_single"
+    st = pdb_path.stem
+    if "_rna_" in st:
+        stem_guess = st.split("_rna_", 1)[0]
+        for suf in (".fasta", ".fa"):
+            fp = inputs_dir / f"{stem_guess}{suf}"
+            if fp.is_file():
+                try:
+                    recs = read_fasta(str(fp))
+                    if recs:
+                        return len(recs[0][1])
+                except Exception:
+                    break
     base_id = _pdb_base_id(pdb_path)
     fasta_path = inputs_dir / f"{base_id}_prot_{chain_id}.fasta"
     if not fasta_path.exists():
@@ -206,10 +300,85 @@ def save_tensor_payload(path: Path, payload: Dict[str, torch.Tensor]) -> None:
 
 def _rewrite_embeddings_in_dir(output_dir: Path) -> None:
     for emb_path in output_dir.glob("*.pt"):
-        payload = torch.load(emb_path, map_location="cpu")
+        payload = torch_load_compat(emb_path, map_location="cpu")
         if not isinstance(payload, dict) or "token_embeddings" not in payload:
             continue
         save_tensor_payload(emb_path, payload)
+
+
+def _rnabert_seq_as_written_to_mlm_fasta(seq: str) -> str:
+    """Same coercion as extract_rnabert writes into the temp FASTA for MLM_SFP."""
+    seq = seq.upper().replace("T", "U")
+    allowed = set("ACGU")
+    return "".join(ch if ch in allowed else "A" for ch in seq)
+
+
+def _rnabert_mlm_keeps_written_seq(written: str, max_position_embeddings: int) -> bool:
+    """Match RNABERT/dataload.py load_data_EMB(record) — sequences that get an embedding line."""
+    gapped = written.upper().replace("T", "U")
+    ungapped = gapped.replace("-", "")
+    if not set(ungapped) <= set("ATGCU"):
+        return False
+    return len(ungapped) < max_position_embeddings
+
+
+def _read_rnabert_max_position_embeddings(repo_root: Path) -> int:
+    path = repo_root / "RNABERT" / "RNA_bert_config.json"
+    with open(path, "r", encoding="utf-8") as handle:
+        return int(json.load(handle)["max_position_embeddings"])
+
+
+def _finalize_rnabert_mlm_output(
+    output_dir: Path,
+    mlm_out_path: Path,
+    fasta_records: List[Tuple[str, str]],
+    *,
+    max_position_embeddings: int,
+) -> None:
+    """
+    RNABERT/MLM_SFP.py writes --embedding_output as plain text (one str(list) per line),
+    not torch.save. Convert to per-sequence {safe_name}.pt payloads expected elsewhere.
+    """
+    raw = mlm_out_path.read_bytes()
+    if not raw.strip():
+        raise RuntimeError(f"RNABERT MLM produced empty file: {mlm_out_path}")
+    first = raw.lstrip()[:1]
+    if first not in (b"[", b"("):
+        try:
+            payload = torch_load_compat(mlm_out_path, map_location="cpu")
+        except Exception:
+            payload = None
+        if isinstance(payload, dict) and "token_embeddings" in payload:
+            save_tensor_payload(mlm_out_path, payload)
+            return
+        raise RuntimeError(
+            f"RNABERT output is not MLM text format and not a loadable embedding dict: {mlm_out_path}"
+        )
+
+    lines = [ln.strip() for ln in mlm_out_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    parsed: List[List] = [ast.literal_eval(ln) for ln in lines]
+    kept: List[Tuple[str, str]] = []
+    for name, seq in fasta_records:
+        written = _rnabert_seq_as_written_to_mlm_fasta(seq)
+        if _rnabert_mlm_keeps_written_seq(written, max_position_embeddings):
+            kept.append((name, written))
+    if len(parsed) != len(kept):
+        raise ValueError(
+            f"RNABERT MLM wrote {len(parsed)} lines but filter predicts {len(kept)} kept sequences "
+            f"(max_position_embeddings={max_position_embeddings}). Check FASTA vs RNABERT/dataload.py."
+        )
+    skipped = len(fasta_records) - len(kept)
+    if skipped:
+        warnings.warn(
+            f"RNABERT skipped {skipped} sequence(s) (length >= {max_position_embeddings} or non-ATGCU after gap strip); no .pt written for those.",
+            UserWarning,
+            stacklevel=2,
+        )
+    for (name, _written), emb_list in zip(kept, parsed):
+        tensor = torch.as_tensor(emb_list, dtype=torch.float32)
+        seq_emb = tensor.mean(dim=0)
+        save_tensor_payload(output_dir / f"{safe_name(name)}.pt", {"token_embeddings": tensor, "sequence_embedding": seq_emb})
+    mlm_out_path.unlink(missing_ok=True)
 
 
 def save_numpy_payload(path: Path, payload: Dict[str, np.ndarray]) -> None:
@@ -390,7 +559,7 @@ def extract_esm2(
         if regression_path.exists():
             model, alphabet = esm.pretrained.load_model_and_alphabet(model_location)
         else:
-            model_data = torch.load(str(model_path), map_location="cpu")
+            model_data = torch_load_compat(str(model_path), map_location="cpu")
             model_name = model_path.stem
             model, alphabet = esm.pretrained.load_model_and_alphabet_core(
                 model_name, model_data, regression_data=None
@@ -555,7 +724,7 @@ def extract_rinalmo(
         raise ValueError(f"Unsupported rinalmo_type: {rinalmo_type}")
     config = model_config(size)
     model = RiNALMo(config)
-    model.load_state_dict(torch.load(model_weights, map_location="cpu"))
+    model.load_state_dict(torch_load_compat(model_weights, map_location="cpu"))
     model.eval()
     device_obj = _device_from_string(device)
     model = model.to(device_obj)
@@ -634,6 +803,22 @@ def extract_protbert(
                 save_tensor_payload(output_dir / f"{safe_name(label)}.pt", payload)
 
 
+def _rna_fm_max_nt(model: torch.nn.Module, alphabet) -> int:
+    """Max nucleotide length that fits in learned position embeddings (BOS/EOS reserved)."""
+    max_pos = int(getattr(model.args, "max_positions", 1024))
+    reserve = int(alphabet.prepend_bos) + int(alphabet.append_eos)
+    return max(1, max_pos - reserve)
+
+
+def _sanitize_rna_sequence_for_fm(seq: str, max_nt: int) -> str:
+    """Strip/uppercase, DNA T→U, truncate to RNA-FM context length."""
+    s = "".join(seq.split()).upper()
+    s = s.translate(str.maketrans("T", "U"))
+    if len(s) > max_nt:
+        s = s[:max_nt]
+    return s
+
+
 def extract_rna_fm(
     fasta_path: str,
     output_dir: str,
@@ -654,18 +839,21 @@ def extract_rna_fm(
         repr_layer = model.num_layers
 
     batch_converter = alphabet.get_batch_converter()
+    max_nt = _rna_fm_max_nt(model, alphabet)
     records = read_fasta(fasta_path)
     output_dir = ensure_dir(output_dir)
 
     with torch.no_grad():
         for batch in chunked(records, batch_size):
-            labels, seqs = zip(*batch)
-            _, _, tokens = batch_converter(batch)
+            batch_pairs = [
+                (lab, _sanitize_rna_sequence_for_fm(seq, max_nt)) for lab, seq in batch
+            ]
+            _, _, tokens = batch_converter(batch_pairs)
             tokens = tokens.to(device_obj)
             results = model(tokens, repr_layers=[repr_layer], return_contacts=False)
             token_reps = results["representations"][repr_layer]
-            for i, label in enumerate(labels):
-                seq_len = len(seqs[i])
+            for i, (label, seq_san) in enumerate(batch_pairs):
+                seq_len = len(seq_san)
                 residue_rep = token_reps[i, 1 : seq_len + 1].detach().cpu()
                 seq_rep = residue_rep.mean(0)
                 payload = {
@@ -682,6 +870,7 @@ def extract_esm_if1(
     model_location: Optional[str] = None,
     chain_id: Optional[str] = None,
     pdb_list: Optional[Iterable[str]] = None,
+    protein_single_dir: Optional[str] = None,
 ) -> None:
     import esm
     from esm.inverse_folding import util as if_util
@@ -694,61 +883,99 @@ def extract_esm_if1(
     device_obj = _device_from_string(device)
     model = model.to(device_obj)
 
-    output_dir = ensure_dir(output_dir)
+    output_dir_p = ensure_dir(output_dir)
     pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
-    tmp_dir = ensure_dir(str(output_dir / "_tmp_pdb"))
+    tmp_dir = ensure_dir(str(output_dir_p / "_tmp_pdb"))
+
+    single_root = Path(protein_single_dir) if protein_single_dir else _protein_single_inputs_dir(output_dir_p)
+    use_protein_single = single_root.is_dir() and (
+        any(single_root.glob("*.fasta")) or any(single_root.glob("*.fa"))
+    )
+
+    def emit_one(pdb_path: Path, cid: str, file_stem: str) -> None:
+        out_path = output_dir_p / f"{file_stem}.pt"
+        if out_path.exists():
+            return
+        tmp_path: Optional[Path] = None
+        coord_loaded = False
+        last_exc: Optional[Exception] = None
+        for cid_try in _chain_id_candidates(pdb_path, cid):
+            try:
+                coords, _ = if_util.load_coords(str(pdb_path), cid_try)
+                coord_loaded = True
+                break
+            except Exception as exc:
+                last_exc = exc
+        if not coord_loaded:
+            tmp_path = tmp_dir / f"{pdb_path.stem}_{safe_name(cid)}.pdb"
+            if not _write_clean_chain_pdb(pdb_path, cid, tmp_path):
+                reason = f"{last_exc}" if last_exc else "unknown"
+                print(
+                    f"[esm_if1] Skipping {pdb_path.name} chain {cid} -> {file_stem}: "
+                    f"unable to sanitize chain ({reason})."
+                )
+                return
+            try:
+                coords, _ = if_util.load_coords(str(tmp_path), "A")
+                coord_loaded = True
+            except Exception as exc2:
+                print(f"[esm_if1] Skipping {pdb_path.name} chain {cid} -> {file_stem}: {exc2}.")
+                return
+        batch_converter = if_util.CoordBatchConverter(alphabet)
+        coords_tensor, confidence, _, _, padding_mask = batch_converter(
+            [(coords, None, None)], device=device_obj
+        )
+        encoder_out = model.encoder.forward(
+            coords_tensor, padding_mask, confidence, return_all_hiddens=False
+        )
+        rep = encoder_out["encoder_out"][0][1:-1, 0]
+        ref_len = (
+            _reference_seq_len_for_protein_single_stem(output_dir_p, file_stem)
+            or _get_reference_length(output_dir_p, pdb_path, cid)
+            or rep.shape[0]
+        )
+        take = min(rep.shape[0], ref_len)
+        rep = rep[:take]
+        payload = {
+            "token_embeddings": rep.detach().cpu(),
+            "sequence_embedding": rep.detach().cpu().mean(0),
+            "chain_id": cid,
+        }
+        save_tensor_payload(out_path, payload)
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
 
     with torch.no_grad():
-        for pdb_path in pdb_files:
-            base_id = _pdb_base_id(pdb_path)
-            chain_ids = _preferred_protein_chain_ids(output_dir, pdb_path, chain_id)
-            if not chain_ids:
-                continue
-            for cid in chain_ids:
-                name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
-                out_path = output_dir / f"{name}.pt"
-                if out_path.exists():
+        if use_protein_single:
+            singles = sorted(
+                list(single_root.glob("*.fasta")) + list(single_root.glob("*.fa")),
+                key=lambda p: p.name,
+            )
+            for fasta in singles:
+                stem = fasta.stem
+                pdb_path = _pdb_path_for_protein_single_stem(stem, pdb_files)
+                if pdb_path is None:
+                    print(
+                        f"[esm_if1] Skipping protein_single/{fasta.name}: "
+                        f"no PDB in pdb_list/pdb_dir matching {stem!r} "
+                        f"(tried '{stem}_rna_*', exact stem, mCSM basename "
+                        f"{_mcsm_train_pdb_stem_from_protein_single_stem(stem)!r})"
+                    )
                     continue
-                tmp_path = None
-                coord_loaded = False
-                last_exc: Optional[Exception] = None
-                for cid_try in _chain_id_candidates(pdb_path, cid):
-                    try:
-                        coords, _ = if_util.load_coords(str(pdb_path), cid_try)
-                        coord_loaded = True
-                        break
-                    except Exception as exc:
-                        last_exc = exc
-                if not coord_loaded:
-                    tmp_path = tmp_dir / f"{pdb_path.stem}_{safe_name(cid)}.pdb"
-                    if not _write_clean_chain_pdb(pdb_path, cid, tmp_path):
-                        reason = f"{last_exc}" if last_exc else "unknown"
-                        print(f"[esm_if1] Skipping {pdb_path.name} chain {cid}: unable to sanitize chain ({reason}).")
-                        continue
-                    try:
-                        coords, _ = if_util.load_coords(str(tmp_path), "A")
-                    except Exception as exc2:
-                        print(f"[esm_if1] Skipping {pdb_path.name} chain {cid}: {exc2}.")
-                        continue
-                batch_converter = if_util.CoordBatchConverter(alphabet)
-                coords_tensor, confidence, _, _, padding_mask = batch_converter(
-                    [(coords, None, None)], device=device_obj
-                )
-                encoder_out = model.encoder.forward(
-                    coords_tensor, padding_mask, confidence, return_all_hiddens=False
-                )
-                rep = encoder_out["encoder_out"][0][1:-1, 0]
-                ref_len = _get_reference_length(Path(output_dir), pdb_path, cid) or rep.shape[0]
-                take = min(rep.shape[0], ref_len)
-                rep = rep[:take]
-                payload = {
-                    "token_embeddings": rep.detach().cpu(),
-                    "sequence_embedding": rep.detach().cpu().mean(0),
-                    "chain_id": cid,
-                }
-                save_tensor_payload(out_path, payload)
-                if tmp_path and tmp_path.exists():
-                    tmp_path.unlink()
+                cid = _protein_chain_from_single_stem(stem)
+                if not cid:
+                    print(f"[esm_if1] Skipping protein_single/{fasta.name}: could not parse _prot_ chain from stem.")
+                    continue
+                emit_one(pdb_path, cid, stem)
+        else:
+            for pdb_path in pdb_files:
+                base_id = _pdb_base_id(pdb_path)
+                chain_ids = _preferred_protein_chain_ids(output_dir_p, pdb_path, chain_id)
+                if not chain_ids:
+                    continue
+                for cid in chain_ids:
+                    name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
+                    emit_one(pdb_path, cid, name)
 
 
 def extract_protein_mpnn(
@@ -761,10 +988,16 @@ def extract_protein_mpnn(
     pdb_list: Optional[Iterable[str]] = None,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
-    sys.path.append(str(repo_root / "ProteinMPNN"))
+    mpnn_dir = repo_root / "ProteinMPNN"
+    if not mpnn_dir.is_dir():
+        raise FileNotFoundError(
+            f"ProteinMPNN not found at {mpnn_dir}. Clone or copy the ProteinMPNN repo there, "
+            "or set protein_structure.models.proteinmpnn.enabled: false in your feature YAML."
+        )
+    sys.path.insert(0, str(mpnn_dir))
     import protein_mpnn_utils as mpnn_utils
 
-    checkpoint = torch.load(model_weights, map_location="cpu")
+    checkpoint = torch_load_compat(model_weights, map_location="cpu")
     hidden_dim = checkpoint.get("hidden_dim", 128)
     num_layers = checkpoint.get("num_layers", 3)
     model = mpnn_utils.ProteinMPNN(
@@ -796,7 +1029,7 @@ def extract_protein_mpnn(
                 ca_only_supported = False
                 ca_only_reason = "CA-only checkpoint not provided"
                 return None
-            checkpoint_ca = torch.load(model_weights_ca_only, map_location="cpu")
+            checkpoint_ca = torch_load_compat(model_weights_ca_only, map_location="cpu")
             ckpt_edge = checkpoint_ca.get("model_state_dict", {}).get("features.edge_embedding.weight")
             model_ca_only = mpnn_utils.ProteinMPNN(
                 num_letters=21,
@@ -972,6 +1205,38 @@ def extract_protein_mpnn(
             # tmp_path is only used in the CIF branch; nothing to clean here.
 
 
+def _foldseek_executable_from_hint(hint: Path) -> Optional[Path]:
+    """If ``hint`` is the binary, or a directory containing ``foldseek``, return it."""
+    try:
+        if hint.is_file() and os.access(hint, os.X_OK):
+            return hint.resolve()
+        nested = hint / "foldseek"
+        if nested.is_file() and os.access(nested, os.X_OK):
+            return nested.resolve()
+    except OSError:
+        pass
+    return None
+
+
+def _resolve_foldseek_executable(repo_root: Path, foldseek_bin: Optional[str]) -> Optional[Path]:
+    """Resolve foldseek: config path, typical ProTrek layouts, then PATH."""
+    hints: List[Path] = []
+    if foldseek_bin:
+        p = Path(foldseek_bin)
+        hints.append(p if p.is_absolute() else (repo_root / p))
+    # Common layouts: ProTrek/bin/foldseek (binary) or ProTrek/bin/foldseek/foldseek (nested release)
+    hints.append(repo_root / "ProTrek" / "bin" / "foldseek")
+    hints.append(repo_root / "ProTrek" / "bin" / "foldseek" / "foldseek")
+    which = shutil.which("foldseek")
+    if which:
+        hints.append(Path(which))
+    for h in hints:
+        hit = _foldseek_executable_from_hint(h)
+        if hit:
+            return hit
+    return None
+
+
 def extract_protrek(
     pdb_dir: str,
     output_dir: str,
@@ -985,6 +1250,7 @@ def extract_protrek(
     batch_size: int = 32,
     chain_id: Optional[str] = None,
     pdb_list: Optional[Iterable[str]] = None,
+    protein_single_dir: Optional[str] = None,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
@@ -993,8 +1259,14 @@ def extract_protrek(
     from ProTrek.utils.foldseek_util import get_struc_seq
     from torch.nn.functional import normalize
 
-    if not foldseek_bin or not Path(foldseek_bin).exists():
-        raise FileNotFoundError(f"Foldseek binary not found: {foldseek_bin}")
+    foldseek_path = _resolve_foldseek_executable(repo_root, foldseek_bin)
+    if not foldseek_path:
+        raise FileNotFoundError(
+            "Foldseek executable not found. Install foldseek (https://github.com/steineggerlab/foldseek), "
+            "ensure it is on PATH, set protein_structure.models.protrek.foldseek_bin to its path, "
+            f"or set protrek.enabled: false. Config foldseek_bin was: {foldseek_bin!r}"
+        )
+    foldseek_bin = str(foldseek_path)
 
     if model_dir:
         model_dir_path = Path(model_dir)
@@ -1016,52 +1288,203 @@ def extract_protrek(
     device_obj = _device_from_string(device)
     model = model.to(device_obj)
 
-    output_dir = ensure_dir(output_dir)
+    output_dir_p = ensure_dir(output_dir)
     pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
 
+    single_root = Path(protein_single_dir) if protein_single_dir else _protein_single_inputs_dir(output_dir_p)
+    use_protein_single = single_root.is_dir() and (
+        any(single_root.glob("*.fasta")) or any(single_root.glob("*.fa"))
+    )
+
+    def emit_one(pdb_path: Path, cid: str, file_stem: str) -> None:
+        out_path = output_dir_p / f"{file_stem}.pt"
+        if out_path.exists():
+            return
+        seq_dict = None
+        resolved_chain = None
+        for cid_try in _chain_id_candidates(pdb_path, cid):
+            seq_dict = get_struc_seq(str(foldseek_bin), str(pdb_path), chains=[cid_try])
+            if seq_dict and cid_try in seq_dict:
+                resolved_chain = cid_try
+                break
+        if not seq_dict or not resolved_chain:
+            return
+        foldseek_seq = seq_dict[resolved_chain][1].lower()
+        seq_len = len(foldseek_seq)
+        tokenizer = model.structure_encoder.tokenizer
+        encoder = model.structure_encoder.model.esm
+        proj = model.structure_encoder.out
+        inputs = tokenizer.batch_encode_plus([foldseek_seq], return_tensors="pt", padding=False)
+        inputs = {k: v.to(device_obj) for k, v in inputs.items()}
+        last_hidden = encoder(**inputs).last_hidden_state
+        token_repr = normalize(proj(last_hidden), dim=-1)[0]
+        token_len = token_repr.shape[0]
+        if token_len == seq_len + 2:
+            token_repr = token_repr[1:-1]
+        elif token_len == seq_len + 1:
+            token_repr = token_repr[1:]
+        elif token_len > seq_len:
+            token_repr = token_repr[:seq_len]
+        ref_len = (
+            _reference_seq_len_for_protein_single_stem(output_dir_p, file_stem)
+            or _get_reference_length(output_dir_p, pdb_path, cid)
+            or seq_len
+        )
+        take = min(seq_len, ref_len, token_repr.shape[0])
+        rep = token_repr[:take].detach().cpu()
+        payload = {
+            "token_embeddings": rep,
+            "sequence_embedding": rep.mean(0),
+            "chain_id": cid,
+        }
+        save_tensor_payload(out_path, payload)
+
     with torch.no_grad():
-        for pdb_path in pdb_files:
-            base_id = _pdb_base_id(pdb_path)
-            chain_ids = _preferred_protein_chain_ids(output_dir, pdb_path, chain_id)
-            for cid in chain_ids:
-                name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
-                out_path = output_dir / f"{name}.pt"
-                if out_path.exists():
+        if use_protein_single:
+            singles = sorted(
+                list(single_root.glob("*.fasta")) + list(single_root.glob("*.fa")),
+                key=lambda p: p.name,
+            )
+            for fasta in singles:
+                stem = fasta.stem
+                pdb_path = _pdb_path_for_protein_single_stem(stem, pdb_files)
+                if pdb_path is None:
+                    print(
+                        f"[protrek] Skipping protein_single/{fasta.name}: "
+                        f"no PDB in pdb_list/pdb_dir matching {stem!r} "
+                        f"(tried '{stem}_rna_*', exact stem, mCSM basename "
+                        f"{_mcsm_train_pdb_stem_from_protein_single_stem(stem)!r})"
+                    )
                     continue
-                seq_dict = None
-                resolved_chain = None
-                for cid_try in _chain_id_candidates(pdb_path, cid):
-                    seq_dict = get_struc_seq(str(foldseek_bin), str(pdb_path), chains=[cid_try])
-                    if seq_dict and cid_try in seq_dict:
-                        resolved_chain = cid_try
-                        break
-                if not seq_dict or not resolved_chain:
+                cid = _protein_chain_from_single_stem(stem)
+                if not cid:
+                    print(f"[protrek] Skipping protein_single/{fasta.name}: could not parse _prot_ chain from stem.")
                     continue
-                foldseek_seq = seq_dict[resolved_chain][1].lower()
-                seq_len = len(foldseek_seq)
-                tokenizer = model.structure_encoder.tokenizer
-                encoder = model.structure_encoder.model.esm
-                proj = model.structure_encoder.out
-                inputs = tokenizer.batch_encode_plus([foldseek_seq], return_tensors="pt", padding=False)
-                inputs = {k: v.to(device_obj) for k, v in inputs.items()}
-                last_hidden = encoder(**inputs).last_hidden_state
-                token_repr = normalize(proj(last_hidden), dim=-1)[0]
-                token_len = token_repr.shape[0]
-                if token_len == seq_len + 2:
-                    token_repr = token_repr[1:-1]
-                elif token_len == seq_len + 1:
-                    token_repr = token_repr[1:]
-                elif token_len > seq_len:
-                    token_repr = token_repr[:seq_len]
-                ref_len = _get_reference_length(Path(output_dir), pdb_path, cid) or seq_len
-                take = min(seq_len, ref_len, token_repr.shape[0])
-                rep = token_repr[:take].detach().cpu()
-                payload = {
-                    "token_embeddings": rep,
-                    "sequence_embedding": rep.mean(0),
-                    "chain_id": cid,
-                }
-                save_tensor_payload(out_path, payload)
+                emit_one(pdb_path, cid, stem)
+        else:
+            for pdb_path in pdb_files:
+                base_id = _pdb_base_id(pdb_path)
+                chain_ids = _preferred_protein_chain_ids(output_dir_p, pdb_path, chain_id)
+                for cid in chain_ids:
+                    name = f"{safe_name(base_id)}_prot_{safe_name(cid)}"
+                    emit_one(pdb_path, cid, name)
+
+
+def _rna_msa_dir(root_path: str, msa_path: str) -> Path:
+    root = Path(root_path)
+    mp = Path(msa_path)
+    return mp if mp.is_absolute() else (root / mp)
+
+
+def _read_first_fasta_body(path: Path) -> str:
+    parts: List[str] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if parts:
+                    break
+                continue
+            parts.append(line)
+    return "".join(parts)
+
+
+def _sanitize_rna_sequence_for_msm_a2m(seq: str) -> str:
+    seq = seq.strip().upper().replace("T", "U")
+    allowed = set("AGCUXN-")
+    return "".join(ch if ch in allowed else "N" for ch in seq)
+
+
+def _ensure_rna_msm_a2m_from_single_fastas(
+    msa_list: str,
+    root_path: str,
+    msa_path: str,
+    rna_single_dir: str,
+) -> None:
+    """
+    Create missing ``{id}.a2m_msa2`` as a one-row FASTA (single sequence), same as ``tools/build_rna_msm_msas.py``.
+    RNA-MSM accepts this when ``max_seqs_per_msa`` is large but only one row is present; it is **not** a homolog MSA.
+    """
+    msa_dir = _rna_msa_dir(root_path, msa_path)
+    msa_dir.mkdir(parents=True, exist_ok=True)
+    single = Path(rna_single_dir)
+    if not single.is_dir():
+        warnings.warn(f"RNA-MSM: rna_single_dir is not a directory: {single}", stacklevel=2)
+        return
+    with open(msa_list, "r", encoding="utf-8") as handle:
+        ids = [ln.strip() for ln in handle if ln.strip()]
+    written = 0
+    for rid in ids:
+        dest = msa_dir / f"{rid}.a2m_msa2"
+        if dest.is_file():
+            continue
+        src = single / f"{rid}.fasta"
+        if not src.is_file():
+            continue
+        seq = _sanitize_rna_sequence_for_msm_a2m(_read_first_fasta_body(src))
+        if not seq:
+            continue
+        dest.write_text(f">{rid}\n{seq}\n", encoding="utf-8")
+        written += 1
+    if written:
+        warnings.warn(
+            f"RNA-MSM: wrote {written} single-sequence .a2m_msa2 file(s) under {msa_dir}. "
+            "For homolog-rich MSAs use RNAcmap3 (see RNA-MSM README).",
+            stacklevel=2,
+        )
+
+
+def _filter_rna_msm_list_to_existing_msas(
+    root_path: str,
+    msa_path: str,
+    msa_list: str,
+    output_dir: Optional[str],
+) -> str:
+    """
+    RNA_MSM_Inference requires one *.a2m_msa2 per id (stem prefix match, same as RNA-MSM A2MDataset).
+    Keep only ids that have an MSA file; write a temp list when anything is dropped.
+    """
+    msa_dir = _rna_msa_dir(root_path, msa_path)
+    if not msa_dir.is_dir():
+        raise FileNotFoundError(f"RNA-MSM MSA directory not found: {msa_dir}")
+
+    # Full stem must match list ids (e.g. mCSM ``1AUD.mut.F55A_A55F_rna_B``). Using
+    # ``stem.split(".")[0]`` wrongly collapses those to ``1AUD`` and drops ~67 rows.
+    available = {f.stem for f in msa_dir.glob("*.a2m_msa2")}
+    with open(msa_list, "r", encoding="utf-8") as handle:
+        requested = [ln.strip() for ln in handle if ln.strip()]
+
+    req_set = set(requested)
+    if req_set <= available:
+        return msa_list
+
+    found = sorted(req_set & available)
+    if not found:
+        preview = list(req_set)[:8]
+        raise FileNotFoundError(
+            f"No *.a2m_msa2 in {msa_dir} match ids from {msa_list} "
+            f"({len(req_set)} unique ids). Examples: {preview}. "
+            "Provide ``rna_single_dir`` + ``build_missing_msas: true`` (extract_features dataset mode does this), "
+            "run ``tools/build_rna_msm_msas.py``, or add real *.a2m_msa2 from RNAcmap3."
+        )
+
+    missing_n = len(req_set - available)
+    if missing_n > 0:
+        warnings.warn(
+            f"RNA-MSM: {missing_n} id(s) have no .a2m_msa2 under {msa_dir}; "
+            f"running inference on {len(found)} id(s) only.",
+            stacklevel=2,
+        )
+
+    dest_parent = Path(output_dir) if output_dir else Path(msa_list).parent
+    dest_parent.mkdir(parents=True, exist_ok=True)
+    filtered_path = dest_parent / ".rna_msm_ids_with_msa.txt"
+    with open(filtered_path, "w", encoding="utf-8") as handle:
+        for rid in found:
+            handle.write(f"{rid}\n")
+    return str(filtered_path)
 
 
 def extract_rna_msm(
@@ -1072,22 +1495,33 @@ def extract_rna_msm(
     output_dir: Optional[str] = None,
     device: str = "cuda",
     extra_overrides: Optional[List[str]] = None,
+    rna_single_dir: Optional[str] = None,
+    build_missing_msas: bool = True,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "RNA-MSM" / "RNA_MSM_Inference.py"
+    if build_missing_msas and rna_single_dir:
+        _ensure_rna_msm_a2m_from_single_fastas(msa_list, root_path, msa_path, rna_single_dir)
+    msa_list_use = _filter_rna_msm_list_to_existing_msas(root_path, msa_path, msa_list, output_dir)
     overrides = [
         f"data.root_path={root_path}",
         f"data.MSA_path={msa_path}",
-        f"data.MSA_list={msa_list}",
+        f"data.MSA_list={msa_list_use}",
         f"data.model_path={model_path}",
-        f"data.output_dir={output_dir or msa_path}",
         f"data.device={device}",
         "hydra.run.dir=.",
         "hydra.output_subdir=null",
-        "hydra.job.chdir=false",
     ]
+    if output_dir:
+        overrides.append(f"data.emb_output_dir={output_dir}")
     if extra_overrides:
-        overrides.extend(extra_overrides)
+        for item in extra_overrides:
+            if not item or not str(item).strip():
+                continue
+            s = str(item).strip()
+            if s.startswith("hydra.job.chdir"):
+                continue
+            overrides.append(s)
     cmd = [sys.executable, str(script_path)] + overrides
     subprocess.run(cmd, check=True)
     if output_dir:
@@ -1114,46 +1548,38 @@ def extract_rna_ernie(
     batch_size: int = 256,
     max_seq_len: int = 512,
 ) -> None:
-    # Avoid MKL load issues on some systems when running on CPU.
-    if device.lower() == "cpu":
-        os.environ.setdefault("FLAGS_use_mkldnn", "0")
-        os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
-    try:
-        import paddle
-        from paddlenlp.transformers import ErnieModel
-    except ImportError as exc:
-        raise RuntimeError("RNAErnie requires paddlepaddle and paddlenlp.") from exc
-
+    """Run Paddle RNAErnie in a subprocess to avoid MKL conflicts with PyTorch in the same process."""
     repo_root = Path(__file__).resolve().parents[1]
-    sys.path.append(str(repo_root / "RNAErnie"))
-    from rna_ernie import BatchConverter
+    worker = repo_root / "feature_extraction" / "rna_ernie_worker.py"
+    if not worker.is_file():
+        raise FileNotFoundError(f"RNAErnie worker missing: {worker}")
 
-    paddle.set_device(device)
-    batch_converter = BatchConverter(
-        k_mer=1,
-        vocab_path=str(repo_root / vocab_path),
-        batch_size=batch_size,
-        max_seq_len=max_seq_len,
-    )
-    model = ErnieModel.from_pretrained(str(repo_root / model_dir))
-    model.eval()
+    md = Path(model_dir)
+    model_dir_abs = str(md if md.is_absolute() else (repo_root / md))
+    vp = Path(vocab_path)
+    vocab_abs = str(vp if vp.is_absolute() else (repo_root / vp))
 
-    records = read_fasta(fasta_path)
-    output_dir = ensure_dir(output_dir)
-
-    with paddle.no_grad():
-        for names, seqs, inputs_ids in batch_converter(records):
-            embeddings = model(inputs_ids)[0].detach().numpy()
-            for i, name in enumerate(names):
-                seq_len = len(seqs[i])
-                # Assume embedding layout: [CLS] + tokens + [SEP]
-                token_embeddings = torch.tensor(embeddings[i, 1 : 1 + seq_len])
-                seq_rep = token_embeddings.mean(0)
-                payload = {
-                    "token_embeddings": token_embeddings,
-                    "sequence_embedding": seq_rep,
-                }
-                save_tensor_payload(output_dir / f"{safe_name(name)}.pt", payload)
+    cmd = [
+        sys.executable,
+        str(worker),
+        "--repo_root",
+        str(repo_root),
+        "--fasta",
+        str(fasta_path),
+        "--output_dir",
+        str(output_dir),
+        "--device",
+        str(device),
+        "--model_dir",
+        model_dir_abs,
+        "--vocab_path",
+        vocab_abs,
+        "--batch_size",
+        str(batch_size),
+        "--max_seq_len",
+        str(max_seq_len),
+    ]
+    subprocess.run(cmd, check=True)
 
 
 def extract_rnabert(
@@ -1161,41 +1587,48 @@ def extract_rnabert(
     output_dir: str,
     model_weights: str = "weights/RNABERT_weights/bert_mul_2.pth",
     batch_size: int = 40,
+    device: str = "cpu",
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "RNABERT" / "MLM_SFP.py"
     output_dir = ensure_dir(output_dir)
     out_file = output_dir / "rnabert_embeddings.pt"
-
-    def _clean_seq(seq: str) -> str:
-        seq = seq.upper().replace("T", "U")
-        allowed = set("ACGU")
-        # RNABERT filters out any sequence with non-ACGU tokens, so coerce to A.
-        return "".join(ch if ch in allowed else "A" for ch in seq)
+    max_pos = _read_rnabert_max_position_embeddings(repo_root)
 
     records = read_fasta(fasta_path)
     cleaned_path = output_dir / "._tmp_rnabert_input.fasta"
     with open(cleaned_path, "w", encoding="utf-8") as handle:
         for name, seq in records:
-            cleaned = _clean_seq(seq)
+            cleaned = _rnabert_seq_as_written_to_mlm_fasta(seq)
             handle.write(f">{name}\n{cleaned}\n")
+
+    mw = Path(model_weights)
+    weights_arg = str(mw.resolve() if mw.is_absolute() else (repo_root / mw).resolve())
+    cleaned_arg = str(cleaned_path.resolve())
+    out_arg = str(out_file.resolve())
 
     cmd = [
         sys.executable,
         str(script_path),
-        "--config",
-        str(repo_root / "RNABERT" / "RNA_bert_config.json"),
         "--pretraining",
-        str(repo_root / model_weights),
+        weights_arg,
         "--data_embedding",
-        str(cleaned_path),
+        cleaned_arg,
         "--embedding_output",
-        str(out_file),
+        out_arg,
         "--batch",
         str(batch_size),
     ]
-    subprocess.run(cmd, check=True)
+    # MLM_SFP loads the full model on CUDA whenever visible; after other extractors
+    # the GPU is often too fragmented for a second large BERT. Default CPU here.
+    run_env = os.environ.copy()
+    if str(device).lower() not in ("cuda", "gpu"):
+        run_env["CUDA_VISIBLE_DEVICES"] = ""
+    subprocess.run(cmd, check=True, cwd=str(repo_root / "RNABERT"), env=run_env)
     cleaned_path.unlink(missing_ok=True)
+    _finalize_rnabert_mlm_output(
+        output_dir, out_file, records, max_position_embeddings=max_pos
+    )
     _rewrite_embeddings_in_dir(output_dir)
 
 
@@ -1206,6 +1639,10 @@ def extract_rhofold(
     ckpt_path: str = "weights/RhFold_weights/model_20221010_params.pt",
     input_a3m: Optional[str] = None,
     single_seq_pred: bool = True,
+    max_rna_length: int = 1000,
+    truncate_rna: bool = False,
+    cuda_safe_max_rna_length: int = 512,
+    skip_existing: bool = True,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     script_path = repo_root / "RhoFold" / "inference.py"
@@ -1214,47 +1651,144 @@ def extract_rhofold(
     fasta_files = [fasta_path]
     if fasta_path.is_dir():
         fasta_files = sorted([p for p in fasta_path.iterdir() if p.suffix in {".fa", ".fasta"}])
-    for fasta_file in fasta_files:
-        run_output = output_dir / f"._tmp_{fasta_file.stem}"
-        run_output.mkdir(parents=True, exist_ok=True)
-        local_input_a3m = input_a3m
-        local_single_seq = single_seq_pred
-        if local_single_seq and not local_input_a3m:
-            # Build a minimal aligned MSA with a single sequence.
-            seq = read_fasta(str(fasta_file))[0][1]
-            local_input_a3m = str(run_output / "single.a3m")
-            Path(local_input_a3m).write_text(f">{fasta_file.stem}\n{seq}\n")
-            local_single_seq = False
-        cmd = [
-            sys.executable,
-            str(script_path),
-            "--device",
-            device,
-            "--ckpt",
-            str(repo_root / ckpt_path),
-            "--input_fas",
-            str(fasta_file),
-            "--output_dir",
-            str(run_output),
-        ]
-        if local_input_a3m:
-            cmd.extend(["--input_a3m", str(local_input_a3m)])
-        if local_single_seq:
-            cmd.extend(["--single_seq_pred", "True"])
-        cmd.extend(["--relax_steps", "0", "--skip_pdb", "--save_embedding"])
-        subprocess.run(cmd, check=True)
-        tmp_embed = run_output / "rhofold_embeddings.pt"
-        stem = fasta_file.stem
-        chain = None
-        if "_rna_" in stem:
-            pdb_stem, chain = stem.split("_rna_", 1)
+
+    def _rhofold_payload_path(fasta_stem: str) -> Path:
+        if "_rna_" in fasta_stem:
+            pdb_stem, chain = fasta_stem.split("_rna_", 1)
             out_name = f"{safe_name(pdb_stem)}_rna_{safe_name(chain)}.pt"
         else:
-            out_name = f"{safe_name(stem)}.pt"
-        if tmp_embed.exists():
-            target = output_dir / out_name
-            shutil.move(str(tmp_embed), str(target))
-            _rewrite_embeddings_in_dir(output_dir)
+            out_name = f"{safe_name(fasta_stem)}.pt"
+        return output_dir / out_name
+
+    def _rhofold_device_attempts(primary: str, seq_len: int) -> List[str]:
+        d_raw = str(primary).strip()
+        d = d_raw.lower()
+        if d == "cpu" or d.startswith("cpu"):
+            return ["cpu"]
+        wants_gpu = d.startswith("cuda") or d == "gpu"
+        cap = int(cuda_safe_max_rna_length)
+        # RhoFold e2eformer triangular attention VRAM grows quickly with L; ~24GB cards
+        # often OOM before L≈800–1000. Skip CUDA when longer to avoid a failed subprocess.
+        if wants_gpu and cap > 0 and seq_len > cap:
+            return ["cpu"]
+        return [d_raw, "cpu"]
+
+    for fasta_file in fasta_files:
+        stem = fasta_file.stem
+        target_existing = _rhofold_payload_path(stem)
+        if skip_existing and target_existing.is_file() and target_existing.stat().st_size > 0:
+            continue
+        run_output = output_dir / f"._tmp_{stem}"
+
+        recs = read_fasta(str(fasta_file))
+        if not recs:
+            warnings.warn(f"RhFold: skipping empty FASTA {fasta_file}", UserWarning, stacklevel=2)
+            continue
+        seq_body = "".join(recs[0][1].split()).upper().replace("T", "U")
+        seq_body = seq_body.replace("-", "")
+        # RhoFold/export_pdb_file only resolves A,U,G,C in RNA_CONSTANTS; characters like
+        # '_' (often from CSV/safe_name pipelines) cause KeyError on export.
+        _raw = seq_body
+        seq_body = "".join(ch for ch in seq_body if ch in "AUGC")
+        if len(seq_body) != len(_raw):
+            warnings.warn(
+                f"RhFold: dropped {len(_raw) - len(seq_body)} non-AUGC character(s) from {fasta_file.name} "
+                f"(RhoFold PDB export only supports canonical bases).",
+                UserWarning,
+                stacklevel=2,
+            )
+        if not seq_body:
+            warnings.warn(f"RhFold: skipping empty sequence in {fasta_file}", UserWarning, stacklevel=2)
+            continue
+        lim = int(max_rna_length)
+        if len(seq_body) > lim:
+            if truncate_rna:
+                warnings.warn(
+                    f"RhFold: truncating {fasta_file.name} from length {len(seq_body)} to {lim} "
+                    f"(RhoFold bundled RNA-FM uses max_positions≈1024; longer inputs cause IndexError; "
+                    f"truncated embeddings may not match full RNA in strict training).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                seq_body = seq_body[:lim]
+            else:
+                warnings.warn(
+                    f"RhFold: skipping {fasta_file.name} (length {len(seq_body)} > max_rna_length={lim}). "
+                    f"Increase rhofold.max_rna_length (risk: RNA-FM OOM) or set rhofold.truncate_rna: true.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+
+        def _build_cmd(dev: str) -> List[str]:
+            shutil.rmtree(run_output, ignore_errors=True)
+            run_output.mkdir(parents=True, exist_ok=True)
+            query_fa = run_output / "._rhofold_query.fasta"
+            query_fa.write_text(f">{stem}\n{seq_body}\n", encoding="utf-8")
+            li = input_a3m
+            lss = single_seq_pred
+            if lss and not li:
+                a3m_path = run_output / "single.a3m"
+                a3m_path.write_text(f">{stem}\n{seq_body}\n", encoding="utf-8")
+                li = str(a3m_path.resolve())
+                lss = False
+            cmd = [
+                sys.executable,
+                str(script_path),
+                "--device",
+                str(dev),
+                "--ckpt",
+                str(repo_root / ckpt_path),
+                "--input_fas",
+                str(query_fa.resolve()),
+                "--output_dir",
+                str(run_output),
+            ]
+            if li:
+                cmd.extend(["--input_a3m", str(li)])
+            if lss:
+                cmd.extend(["--single_seq_pred", "True"])
+            cmd.extend(["--relax_steps", "0"])
+            return cmd
+
+        attempts = _rhofold_device_attempts(device, len(seq_body))
+        for idx, dev in enumerate(attempts):
+            cmd = _build_cmd(dev)
+            run_env = os.environ.copy()
+            if str(dev).lower().startswith("cpu"):
+                run_env["CUDA_VISIBLE_DEVICES"] = ""
+            try:
+                subprocess.run(cmd, check=True, env=run_env)
+                break
+            except subprocess.CalledProcessError as exc:
+                if idx == len(attempts) - 1:
+                    shutil.rmtree(run_output, ignore_errors=True)
+                    raise RuntimeError(
+                        f"RhFold inference failed for {fasta_file.name} after devices {attempts!r}."
+                    ) from exc
+                warnings.warn(
+                    f"RhFold failed on device={dev!r} for {fasta_file.name} (exit {exc.returncode}); "
+                    f"retrying on {attempts[idx + 1]!r}.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        npz_path = run_output / "results.npz"
+        if not npz_path.is_file():
+            shutil.rmtree(run_output, ignore_errors=True)
+            raise FileNotFoundError(
+                f"RhoFold inference did not write {npz_path}; check RhoFold/inference.py output layout."
+            )
+        z = np.load(npz_path)
+        if "single_embedding" not in z:
+            shutil.rmtree(run_output, ignore_errors=True)
+            raise KeyError(f"{npz_path} missing 'single_embedding' (keys: {list(z.keys())})")
+        arr = z["single_embedding"]
+        tensor = torch.as_tensor(arr, dtype=torch.float32)
+        payload = {"token_embeddings": tensor, "sequence_embedding": tensor.mean(dim=0)}
+        target = _rhofold_payload_path(stem)
+        save_tensor_payload(target, payload)
+        _rewrite_embeddings_in_dir(output_dir)
         shutil.rmtree(run_output, ignore_errors=True)
 
 

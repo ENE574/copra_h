@@ -1,0 +1,37 @@
+# PRA201: subset of PRA310 (same columns / PDB tree as PRA310.csv vs PRA201.csv under splits/).
+# FoldX PIA CSV must list the same structures as df_path (one row per complex).
+#
+# FoldX PIA CSV: subset from full PRA310 file (no FoldX rerun):
+#   python scripts/subset_pra201_foldx_pia_terms.py
+# Or re-run FoldX on PRA201 only:
+#   python scripts/precompute_pra310_foldx_pia_terms.py --csv .../PRA201.csv --output .../PRA201_foldx_pia_terms.csv
+#
+# Offline embeddings: use the same root as PRA310 if features were extracted for the full set
+# (PRA201 complexes are a subset). Point elsewhere only if you maintain a PRA201-only cache.
+
+dataset_type: 'structure_dataset'
+df_path: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA201.csv'
+batch_size: 8
+data_root: '/media/SSD0/csd/lrg/datasets/PRA310/PDBs'
+num_workers: 0
+col_prot_chain: 'Protein chains'
+col_na_chain: 'RNA chains'
+col_prot: 'Protein sequences'
+col_na: 'RNA sequences'
+col_label: '△G(kcal/mol)'
+pin_memory: True
+cache_dir: '/media/SSD0/csd/lrg/cache/pra201_foldx_csv'
+loss_type: regression
+strategy: separate
+
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_PRA310'
+
+physics_targets_csv: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA201_foldx_pia_terms.csv'
+
+transform:
+  - type: select_atom
+    resolution: backbone
+  - type: selected_region_with_distmap
+    patch_size: 256
+  - type: subtract_center_of_mass

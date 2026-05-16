@@ -124,14 +124,16 @@ def check_protrek(cfg, base: Path):
     repo_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo_root))
     sys.modules.pop("utils", None)
+    from feature_extraction.extractors import _resolve_foldseek_executable
     from ProTrek.model.ProTrek.protrek_trimodal_model import ProTrekTrimodalModel
 
     model_dir = _as_path(base, cfg.get("model_dir"))
     if not model_dir or not Path(model_dir).exists():
         raise FileNotFoundError(f"missing model_dir: {model_dir}")
-    foldseek_bin = _as_path(base, cfg.get("foldseek_bin"))
-    if not foldseek_bin or not Path(foldseek_bin).exists():
-        raise FileNotFoundError(f"missing foldseek_bin: {foldseek_bin}")
+    foldseek_hint = _as_path(base, cfg.get("foldseek_bin")) if cfg.get("foldseek_bin") else None
+    foldseek_path = _resolve_foldseek_executable(repo_root, foldseek_hint)
+    if not foldseek_path:
+        raise FileNotFoundError(f"missing foldseek executable (foldseek_bin={cfg.get('foldseek_bin')!r})")
 
     protein_config = _as_path(base, cfg.get("protein_config")) or str(Path(model_dir) / "esm2_t33_650M_UR50D")
     text_config = _as_path(base, cfg.get("text_config")) or str(Path(model_dir) / "BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext")

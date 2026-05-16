@@ -173,3 +173,6 @@ wandb
 # code_play.ipynb
 *.ipynb
 hugging_face
+
+# Local flag for scripts/finetune_loop_until.sh
+.finetune_loop_stop

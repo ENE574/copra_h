@@ -121,7 +121,14 @@ class LightningRunner(object):
                 strategy=strategy,
                 log_every_n_steps=3,
             )
-            trainer.fit(model=model, datamodule=data_module, ckpt_path=self.run_args.ckpt)
+            fit_ckpt = None
+            if getattr(self.run_args, "ckpt", None) is not None:
+                fit_ckpt = self.run_args.ckpt
+            else:
+                ckpts = getattr(self.run_args, "ckpts", None)
+                if ckpts is not None and k < len(ckpts):
+                    fit_ckpt = ckpts[k]
+            trainer.fit(model=model, datamodule=data_module, ckpt_path=fit_ckpt)
             print(f"Training fold {k} Finished!")
             trainer.strategy.barrier()
             print("Best Validation Results:")

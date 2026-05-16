@@ -8,6 +8,7 @@ import pandas as pd
 import pytorch_lightning as pl
 from models import ModelRegister
 from utils.metrics import ScalarMetricAccumulator, cal_pearson, cal_spearman, cal_rmse, cal_mae, get_loss, per_complex_corr
+from utils.torch_compat import torch_load_compat
 def get_model(model_args:dict=None):
     register = ModelRegister()
     model_args_ori = {}
@@ -45,23 +46,155 @@ class DDGModule(pl.LightningModule):
         # )
         self.train_loss = None
         print("Initializing DDG Module!")
-        # self.configure_optimizers()
+
+        def _get_hp(name, default=None):
+            if self.run_args is not None and hasattr(self.run_args, name):
+                return getattr(self.run_args, name)
+            if hasattr(self.model_args, "train") and hasattr(self.model_args.train, name):
+                return getattr(self.model_args.train, name)
+            return default
+
+        self.physics_aux_max_weight = float(_get_hp("physics_aux_max_weight", 0.0))
+        self.physics_aux_warmup_epochs = int(_get_hp("physics_aux_warmup_epochs", 0))
+        self.physics_aux_decay_epochs = int(_get_hp("physics_aux_decay_epochs", 0))
+        self.physics_aux_min_weight = float(_get_hp("physics_aux_min_weight", 0.0))
+        self.physics_aux_normalize = bool(_get_hp("physics_aux_normalize", True))
+        self.physics_aux_clip = float(_get_hp("physics_aux_clip", 0.0))
+        self.physics_aux_stop_grad = bool(_get_hp("physics_aux_stop_grad", False))
+        self.physics_aux_start_epoch = int(_get_hp("physics_aux_start_epoch", 0))
+        self.physics_aux_prob = float(_get_hp("physics_aux_prob", 1.0))
+        self.physics_aux_terms = _get_hp("physics_aux_terms", None)
+        if self.physics_aux_terms is not None:
+            if isinstance(self.physics_aux_terms, str):
+                self.physics_aux_terms = [self.physics_aux_terms]
+            self.physics_aux_terms = [str(x) for x in list(self.physics_aux_terms)]
+        self.physics_aux_standardize = bool(_get_hp("physics_aux_standardize", True))
+        _pia_names = list(self.model.physics_names)
+        _mu = torch.zeros(len(_pia_names), dtype=torch.float32)
+        _std = torch.ones(len(_pia_names), dtype=torch.float32)
+        if self.physics_aux_standardize:
+            csv_path = getattr(self.data_args, "physics_targets_csv", None)
+            if csv_path and Path(str(csv_path)).is_file():
+                from data.foldx_physics import compute_physics_target_stats_from_csv
+
+                mu_d, std_d = compute_physics_target_stats_from_csv(csv_path)
+                for i, n in enumerate(_pia_names):
+                    _mu[i] = float(mu_d.get(n, 0.0))
+                    _std[i] = max(float(std_d.get(n, 1.0)), 1e-6)
+        self.register_buffer("_pia_target_mu", _mu, persistent=False)
+        self.register_buffer("_pia_target_std", _std, persistent=False)
+        self._pia_name_to_idx = {n: i for i, n in enumerate(_pia_names)}
+
+    def _physics_aux_weight(self) -> float:
+        e = int(self.current_epoch)
+        if self.physics_aux_max_weight <= 0:
+            return 0.0
+        if self.physics_aux_warmup_epochs > 0 and e < self.physics_aux_warmup_epochs:
+            return float(self.physics_aux_max_weight * (e + 1) / float(self.physics_aux_warmup_epochs))
+        if self.physics_aux_decay_epochs <= 0:
+            return float(self.physics_aux_max_weight)
+        t = min(1.0, (e - self.physics_aux_warmup_epochs) / float(self.physics_aux_decay_epochs))
+        return float(self.physics_aux_max_weight + t * (self.physics_aux_min_weight - self.physics_aux_max_weight))
+
+    def _physics_aux_loss(self, batch, pooled_mut: torch.Tensor, main_loss: torch.Tensor) -> torch.Tensor:
+        """MSE on standardized FoldX terms vs physics heads (mutant pooled), mirroring ModelModule."""
+        if self.physics_aux_max_weight <= 0:
+            return pooled_mut.new_zeros(())
+        if "physics_targets" not in batch:
+            return pooled_mut.new_zeros(())
+        targets = batch["physics_targets"]
+        pooled = pooled_mut.detach() if self.physics_aux_stop_grad else pooled_mut
+        physics_pred = {name: self.model.physics_heads[name](pooled).squeeze(-1) for name in self.model.physics_names}
+        allowed_terms = set(self.physics_aux_terms) if self.physics_aux_terms is not None else None
+        physics_loss = pooled.new_zeros(())
+        physics_terms = 0
+        for name in physics_pred:
+            if allowed_terms is not None and name not in allowed_terms:
+                continue
+            if name not in targets:
+                continue
+            t = targets[name].float()
+            p = physics_pred[name]
+            if self.physics_aux_standardize:
+                i = self._pia_name_to_idx[name]
+                m = self._pia_target_mu[i].to(device=p.device, dtype=p.dtype)
+                s = self._pia_target_std[i].to(device=p.device, dtype=p.dtype)
+                p_loss = F.mse_loss((p - m) / (s + 1e-8), (t - m) / (s + 1e-8))
+            else:
+                p_loss = F.mse_loss(p, t)
+            physics_loss = physics_loss + p_loss
+            physics_terms += 1
+            self.log(f"train/loss_{name}", p_loss.detach(), batch_size=self.batch_size, on_step=True, sync_dist=True)
+        if physics_terms == 0:
+            return pooled_mut.new_zeros(())
+        physics_loss = physics_loss / float(physics_terms)
+        if self.physics_aux_normalize:
+            denom = main_loss.detach().clamp_min(1e-8)
+            physics_loss = physics_loss / denom
+        if self.physics_aux_clip and self.physics_aux_clip > 0:
+            physics_loss = physics_loss.clamp(max=self.physics_aux_clip)
+        return physics_loss
 
     def get_progress_bar_dict(self):
         tqdm_dict = super().get_progress_bar_dict()
         tqdm_dict.pop('v_num', None)
         return tqdm_dict
 
+    def _ddg_optimizer_param_groups(self):
+        """Higher LR for pred_head and optional offline stem (per-model proj + q/k/v group projs)."""
+        base_lr = float(self.optimizers_cfg.lr)
+        head_mult = float(getattr(self.optimizers_cfg, "pred_head_lr_mult", 1.0))
+        stem_mult = float(getattr(self.optimizers_cfg, "offline_fusion_stem_lr_mult", 1.0))
+
+        head_ids = set()
+        stem_ids = set()
+        groups = []
+
+        head_params = list(self.model.pred_head.parameters())
+        if head_mult != 1.0:
+            head_ids = {id(p) for p in head_params}
+            groups.append({"params": head_params, "lr": base_lr * head_mult})
+
+        stem_params = []
+        if stem_mult != 1.0 and getattr(self.model, "use_offline_embeddings", False):
+            for name in ("offline_proj", "offline_q_proj", "offline_k_proj", "offline_v_proj"):
+                mod = getattr(self.model, name, None)
+                if mod is not None:
+                    stem_params.extend(list(mod.parameters()))
+        if stem_mult != 1.0 and stem_params:
+            stem_ids = {id(p) for p in stem_params}
+            groups.append({"params": stem_params, "lr": base_lr * stem_mult})
+
+        rest = [p for p in self.parameters() if id(p) not in head_ids and id(p) not in stem_ids]
+        groups.append({"params": rest, "lr": base_lr})
+
+        if head_mult != 1.0 or stem_mult != 1.0:
+            nh, ns, nr = (len(head_params) if head_mult != 1.0 else 0), (
+                len(stem_params) if stem_mult != 1.0 and stem_params else 0
+            ), len(rest)
+            print(
+                "DDG param groups: base_lr=%s pred_head_lr_mult=%s offline_fusion_stem_lr_mult=%s "
+                "-> tensors: pred_head=%d offline_stem=%d other=%d"
+                % (base_lr, head_mult, stem_mult, nh, ns, nr)
+            )
+        return groups
+
     def configure_optimizers(self):
         print("Configuring Optimizers...")
-        if self.optimizers_cfg.type == 'adam':
-            optimizer = torch.optim.Adam(self.parameters(), 
-                                         lr=self.optimizers_cfg.lr, 
-                                         betas=(self.optimizers_cfg.beta1, self.optimizers_cfg.beta2, ))
-        elif self.optimizers_cfg.type == 'sgd':
-            optimizer = torch.optim.SGD(self.parameters(), lr=self.optimizers_cfg.lr)
-        elif self.optimizers_cfg.type == 'rmsprop':
-            optimizer = torch.optim.RMSprop(self.parameters(), lr=self.optimizers_cfg.lr)
+        opt_type = str(self.optimizers_cfg.type).lower()
+        wd = float(getattr(self.optimizers_cfg, "weight_decay", 0.0))
+        b1 = float(getattr(self.optimizers_cfg, "beta1", 0.9))
+        b2 = float(getattr(self.optimizers_cfg, "beta2", 0.999))
+        betas = (b1, b2)
+        param_groups = self._ddg_optimizer_param_groups()
+        if opt_type == "adam":
+            optimizer = torch.optim.Adam(param_groups, betas=betas, weight_decay=wd)
+        elif opt_type == "adamw":
+            optimizer = torch.optim.AdamW(param_groups, betas=betas, weight_decay=wd)
+        elif opt_type == "sgd":
+            optimizer = torch.optim.SGD(param_groups, weight_decay=wd)
+        elif opt_type == "rmsprop":
+            optimizer = torch.optim.RMSprop(param_groups, weight_decay=wd)
         else:
             raise NotImplementedError('Optimizer not supported: %s' % self.optimizers_cfg.type)
 
@@ -82,7 +215,7 @@ class DDGModule(pl.LightningModule):
 
         if self.model_args.resume is not None:
             print("Resuming from checkloint: %s" % self.model_args.resume)
-            ckpt = torch.load(self.model_args.resume, map_location=self.model_args.device)
+            ckpt = torch_load_compat(self.model_args.resume, map_location=self.model_args.device)
             it_first = ckpt['iteration']
             lsd_result = self.model.load_state_dict(ckpt['state_dict'], strict=False)
             print('Missing keys (%d): %s' % (len(lsd_result.missing_keys), ', '.join(lsd_result.missing_keys)))
@@ -90,9 +223,20 @@ class DDGModule(pl.LightningModule):
                 'Unexpected keys (%d): %s' % (len(lsd_result.unexpected_keys), ', '.join(lsd_result.unexpected_keys)))
 
             print('Resuming optimizer states...')
-            optimizer.load_state_dict(ckpt['optimizer'])
+            try:
+                optimizer.load_state_dict(ckpt['optimizer'])
+            except Exception as ex:
+                print(
+                    "Warning: could not load optimizer from resume checkpoint (%s). "
+                    "This often happens when param groups changed (e.g. pred_head_lr_mult). "
+                    "Continuing with a fresh optimizer state."
+                    % (ex,)
+                )
             print('Resuming scheduler states...')
-            scheduler.load_state_dict(ckpt['scheduler'])
+            try:
+                scheduler.load_state_dict(ckpt['scheduler'])
+            except Exception as ex:
+                print("Warning: could not load scheduler from resume checkpoint (%s)." % (ex,))
             
         if self.scheduler_cfg.type == 'plateau':
             optim_dict = {
@@ -126,19 +270,36 @@ class DDGModule(pl.LightningModule):
         
     def training_step(self, batch, batch_idx):
         y = batch['labels']
-        ddg_pred, ddg_pred_inv = self.model(batch, self.data_args.strategy, 'mutation')
-        # batch['prot'] = batch['prot_mut']
-        # batch['restype'] = batch['mut_restype']
-        # feat_mut = self.model(batch, self.data_args.strategy, 'mutation')
-        # ddg_pred = self.ddg_head(feat_wild - feat_mut).squeeze(1)
-        # ddg_pred_inv = self.ddg_head(feat_mut - feat_wild).squeeze(1)
-        # print(y.shape, pred.shape)
+        mut_out = self.model(batch, self.data_args.strategy, 'mutation')
+        ddg_pred = mut_out['ddg_pred']
+        ddg_pred_inv = mut_out['ddg_pred_inv']
+        pooled_mut = mut_out['pooled_mut']
         loss = get_loss(self.l_type, ddg_pred, y, reduction='mean')
         loss_inv = get_loss(self.l_type, ddg_pred_inv, -y, reduction='mean')
         loss = 0.5 * (loss + loss_inv)
-        # if torch.isnan(loss).any():
-        #     print("Found nan in loss!", input)
-        #     exit()
+
+        bs_std = ddg_pred.detach().float().std(unbiased=False)
+        self.log(
+            "train/ddg_pred_batch_std",
+            bs_std,
+            batch_size=self.batch_size,
+            on_step=True,
+            sync_dist=True,
+        )
+
+        if self.physics_aux_max_weight > 0 and pooled_mut is not None:
+            physics_loss = self._physics_aux_loss(batch, pooled_mut, loss)
+            w = self._physics_aux_weight()
+            if int(self.current_epoch) < int(self.physics_aux_start_epoch):
+                w = 0.0
+            if self.physics_aux_prob < 1.0:
+                if float(torch.rand(1, device=loss.device).item()) > float(self.physics_aux_prob):
+                    w = 0.0
+            self.log("train/physics_aux_weight", w, batch_size=self.batch_size, on_step=True, sync_dist=True)
+            self.log("train/physics_aux_loss", physics_loss.detach(), batch_size=self.batch_size, on_step=True, sync_dist=True)
+            self.log("train/ddg_main_loss", loss.detach(), batch_size=self.batch_size, on_step=True, sync_dist=True)
+            loss = loss + w * physics_loss
+
         self.train_loss = loss.detach()
         self.log("train_loss", float(self.train_loss), batch_size=self.batch_size, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
         for complex, y_true, y_pred in zip(batch['complex'], batch['labels'], ddg_pred):
@@ -179,7 +340,8 @@ class DDGModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         y = batch['labels']
-        ddg_pred, ddg_pred_inv = self.model(batch, self.data_args.strategy, 'mutation')
+        mut_out = self.model(batch, self.data_args.strategy, 'mutation')
+        ddg_pred, ddg_pred_inv = mut_out['ddg_pred'], mut_out['ddg_pred_inv']
         # batch['prot'] = batch['prot_mut']
         # batch['restype'] = batch['mut_restype']
         # feat_mut = self.model(batch, self.data_args.strategy, 'mutation')
@@ -236,7 +398,8 @@ class DDGModule(pl.LightningModule):
         
     def test_step(self, batch, batch_idx):
         y = batch['labels']
-        ddg_pred, ddg_pred_inv = self.model(batch, self.data_args.strategy, 'mutation')
+        mut_out = self.model(batch, self.data_args.strategy, 'mutation')
+        ddg_pred, ddg_pred_inv = mut_out['ddg_pred'], mut_out['ddg_pred_inv']
         # batch['prot'] = batch['prot_mut']
         # batch['restype'] = batch['mut_restype']
         # feat_mut = self.model(batch, self.data_args.strategy, 'mutation')

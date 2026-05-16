@@ -8,6 +8,7 @@ import pandas as pd
 import pytorch_lightning as pl
 from models import ModelRegister
 from utils.metrics import ScalarMetricAccumulator, cal_pearson, cal_spearman, cal_rmse, cal_mae, get_loss
+from utils.torch_compat import torch_load_compat
 def get_model(model_args:dict=None):
     register = ModelRegister()
     model_args_ori = {}
@@ -72,6 +73,24 @@ class ModelModule(pl.LightningModule):
             if isinstance(self.physics_aux_terms, str):
                 self.physics_aux_terms = [self.physics_aux_terms]
             self.physics_aux_terms = [str(x) for x in list(self.physics_aux_terms)]
+
+        # Z-score physics targets vs preds using CSV population stats (same space as FoldX kcal/mol).
+        self.physics_aux_standardize = bool(_get_hp("physics_aux_standardize", True))
+        _pia_names = list(self.model.physics_names)
+        _mu = torch.zeros(len(_pia_names), dtype=torch.float32)
+        _std = torch.ones(len(_pia_names), dtype=torch.float32)
+        if self.physics_aux_standardize:
+            csv_path = getattr(self.data_args, "physics_targets_csv", None)
+            if csv_path and Path(str(csv_path)).is_file():
+                from data.foldx_physics import compute_physics_target_stats_from_csv
+
+                mu_d, std_d = compute_physics_target_stats_from_csv(csv_path)
+                for i, n in enumerate(_pia_names):
+                    _mu[i] = float(mu_d.get(n, 0.0))
+                    _std[i] = max(float(std_d.get(n, 1.0)), 1e-6)
+        self.register_buffer("_pia_target_mu", _mu, persistent=False)
+        self.register_buffer("_pia_target_std", _std, persistent=False)
+        self._pia_name_to_idx = {n: i for i, n in enumerate(_pia_names)}
 
     def on_fit_start(self) -> None:
         if not self.standardize_label:
@@ -140,14 +159,30 @@ class ModelModule(pl.LightningModule):
         return tqdm_dict
 
     def configure_optimizers(self):
-        if self.optimizers_cfg.type == 'adam':
-            optimizer = torch.optim.Adam(self.parameters(), 
-                                         lr=self.optimizers_cfg.lr, 
-                                         betas=(self.optimizers_cfg.beta1, self.optimizers_cfg.beta2, ))
-        elif self.optimizers_cfg.type == 'sgd':
-            optimizer = torch.optim.SGD(self.parameters(), lr=self.optimizers_cfg.lr)
-        elif self.optimizers_cfg.type == 'rmsprop':
-            optimizer = torch.optim.RMSprop(self.parameters(), lr=self.optimizers_cfg.lr)
+        opt_type = str(self.optimizers_cfg.type).lower()
+        wd = float(getattr(self.optimizers_cfg, "weight_decay", 0.0))
+        b1 = float(getattr(self.optimizers_cfg, "beta1", 0.9))
+        b2 = float(getattr(self.optimizers_cfg, "beta2", 0.999))
+        betas = (b1, b2)
+        if opt_type == "adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=self.optimizers_cfg.lr,
+                betas=betas,
+                weight_decay=wd,
+            )
+        elif opt_type == "adamw":
+            # Decoupled weight decay (Loshchilov & Hutter); prefer smaller wd than legacy Adam+L2.
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.optimizers_cfg.lr,
+                betas=betas,
+                weight_decay=wd,
+            )
+        elif opt_type == "sgd":
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.optimizers_cfg.lr, weight_decay=wd)
+        elif opt_type == "rmsprop":
+            optimizer = torch.optim.RMSprop(self.parameters(), lr=self.optimizers_cfg.lr, weight_decay=wd)
         else:
             raise NotImplementedError('Optimizer not supported: %s' % self.optimizers_cfg.type)
 
@@ -168,7 +203,7 @@ class ModelModule(pl.LightningModule):
 
         if self.model_args.resume is not None:
             print("Resuming from checkloint: %s" % self.model_args.resume)
-            ckpt = torch.load(self.model_args.resume, map_location=self.model_args.device)
+            ckpt = torch_load_compat(self.model_args.resume, map_location=self.model_args.device)
             it_first = ckpt['iteration']
             lsd_result = self.model.load_state_dict(ckpt['state_dict'], strict=False)
             print('Missing keys (%d): %s' % (len(lsd_result.missing_keys), ', '.join(lsd_result.missing_keys)))
@@ -246,8 +281,15 @@ class ModelModule(pl.LightningModule):
                     if allowed_terms is not None and name not in allowed_terms:
                         continue
                     if name in targets:
-                        # Use MSE loss for physical property regression
-                        p_loss = F.mse_loss(physics_pred[name], targets[name].float())
+                        t = targets[name].float()
+                        p = physics_pred[name]
+                        if self.physics_aux_standardize:
+                            i = self._pia_name_to_idx[name]
+                            m = self._pia_target_mu[i].to(device=p.device, dtype=p.dtype)
+                            s = self._pia_target_std[i].to(device=p.device, dtype=p.dtype)
+                            p_loss = F.mse_loss((p - m) / (s + 1e-8), (t - m) / (s + 1e-8))
+                        else:
+                            p_loss = F.mse_loss(p, t)
                         physics_loss += p_loss
                         physics_terms += 1
                         self.log(f"train/loss_{name}", p_loss, batch_size=self.batch_size, on_step=True, sync_dist=True)

@@ -1,8 +1,8 @@
 dataset_type: 'structure_dataset'
-df_path: './datasets/mCSM_RNA/splits/crossvalidation.csv'
-batch_size: 8
-data_root: './datasets/mCSM_RNA/PDBs'
-num_workers: 2
+df_path: '/media/SSD0/csd/lrg/datasets/mCSM_RNA/splits/crossvalidation.csv'
+batch_size: 4
+data_root: '/media/SSD0/csd/lrg/datasets/mCSM_RNA/PDBs'
+num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
 col_prot: 'Protein sequences'
@@ -11,9 +11,17 @@ mut: True
 col_na: 'RNA sequences'
 col_label: 'DDG'
 pin_memory: True
-cache_dir: './cache/mmCSM'
+cache_dir: '/media/SSD0/csd/lrg/cache/mmCSM'
 loss_type: regression
 strategy: separate
+
+# Required with config/models/best.yml (use_offline_embeddings: true).
+# Run: python extract_features.py --config config/feature_extract_mCSM_RNA.yml
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_mCSM_RNA'
+
+# FoldX / PIA targets (per structure id); used with train.physics_aux_* in model config.
+physics_targets_csv: '/media/SSD0/csd/lrg/datasets/mCSM_RNA/splits/mCSM_RNA_crossvalidation_foldx_pia_terms.csv'
 
 transform:
   - type: select_atom

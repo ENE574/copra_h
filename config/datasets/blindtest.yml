@@ -1,8 +1,8 @@
 dataset_type: 'structure_dataset'
-df_path: './datasets/mCSM_RNA/splits/blindtest.csv'
+df_path: '/media/SSD0/csd/lrg/datasets/mCSM_RNA/splits/blindtest.csv'
 batch_size: 8
-data_root: './datasets/mCSM_RNA/PDBs'
-num_workers: 2
+data_root: '/media/SSD0/csd/lrg/datasets/mCSM_RNA/PDBs'
+num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
 col_prot: 'Protein sequences'
@@ -11,9 +11,17 @@ mut: True
 col_na: 'RNA sequences'
 col_label: 'DDG'
 pin_memory: True
-cache_dir: './cache/blindtest'
+cache_dir: '/media/SSD0/csd/lrg/cache/blindtest'
 loss_type: regression
 strategy: separate
+
+# Required with config/models/best.yml (use_offline_embeddings: true on the model).
+# Run: python extract_features.py --config config/feature_extract_mCSM_RNA.yml
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_mCSM_RNA'
+
+# Split column fold_0 … fold_{K-1}: values train / val / test. If there is no `train`,
+# finetune reuses `val` rows for training (see pl_modules/data_module.py).
 
 transform:
   - type: select_atom

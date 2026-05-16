@@ -65,6 +65,8 @@ def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: 
     fasta = _as_path(base_dir, cfg.get("fasta"))
     pdb_list = cfg.get("pdb_list")
     models = cfg.get("models", {})
+    protein_single = output_root / "inputs" / "protein_single"
+    protein_single_arg = str(protein_single) if protein_single.is_dir() else None
     if pdb_dir and models.get("esm_if1", {}).get("enabled", True) and _allowed("esm_if1", allowed):
         model_cfg = models.get("esm_if1", {})
         extractors.extract_esm_if1(
@@ -74,8 +76,10 @@ def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: 
             model_location=_as_path(base_dir, model_cfg.get("model_location")),
             chain_id=model_cfg.get("chain_id"),
             pdb_list=pdb_list,
+            protein_single_dir=model_cfg.get("protein_single_dir") or protein_single_arg,
         )
-    if pdb_dir and models.get("proteinmpnn", {}).get("enabled", True) and _allowed("proteinmpnn", allowed):
+    # Optional: requires vendored `ProteinMPNN/` (not in all checkouts); default off.
+    if pdb_dir and models.get("proteinmpnn", {}).get("enabled", False) and _allowed("proteinmpnn", allowed):
         model_cfg = models.get("proteinmpnn", {})
         extractors.extract_protein_mpnn(
             pdb_dir=pdb_dir,
@@ -112,6 +116,7 @@ def run_protein_structure(cfg: dict, base_dir: Path, output_root: Path, device: 
             batch_size=int(model_cfg.get("batch_size", 32)),
             chain_id=model_cfg.get("chain_id"),
             pdb_list=pdb_list,
+            protein_single_dir=model_cfg.get("protein_single_dir") or protein_single_arg,
         )
     if models.get("alphafold2", {}).get("enabled", False) and _allowed("alphafold2", allowed):
         model_cfg = models.get("alphafold2", {})
@@ -170,6 +175,10 @@ def run_rna_sequence(cfg: dict, base_dir: Path, output_root: Path, device: str, 
             output_dir=str(output_root / "rna_sequence" / "rna_msm"),
             device=model_cfg.get("device", device),
             extra_overrides=model_cfg.get("extra_overrides"),
+            rna_single_dir=_as_path(base_dir, model_cfg["rna_single_dir"])
+            if model_cfg.get("rna_single_dir")
+            else None,
+            build_missing_msas=bool(model_cfg.get("build_missing_msas", True)),
         )
 
 
@@ -194,6 +203,7 @@ def run_rna_structure(cfg: dict, base_dir: Path, output_root: Path, device: str,
             output_dir=str(output_root / "rna_structure" / "rnabert"),
             model_weights=_as_path(base_dir, model_cfg.get("model_weights", "weights/RNABERT_weights/bert_mul_2.pth")),
             batch_size=model_cfg.get("batch_size", 40),
+            device=str(model_cfg.get("device", "cpu")),
         )
     if fasta and models.get("rhofold", {}).get("enabled", False) and _allowed("rhofold", allowed):
         model_cfg = models.get("rhofold", {})
@@ -205,6 +215,10 @@ def run_rna_structure(cfg: dict, base_dir: Path, output_root: Path, device: str,
             ckpt_path=_as_path(base_dir, model_cfg.get("ckpt_path", "weights/RhFold_weights/model_20221010_params.pt")),
             input_a3m=_as_path(base_dir, model_cfg.get("input_a3m")),
             single_seq_pred=bool(model_cfg.get("single_seq_pred", True)),
+            max_rna_length=int(model_cfg.get("max_rna_length", 1000)),
+            truncate_rna=bool(model_cfg.get("truncate_rna", False)),
+            cuda_safe_max_rna_length=int(model_cfg.get("cuda_safe_max_rna_length", 512)),
+            skip_existing=bool(model_cfg.get("skip_existing", True)),
         )
 
 
@@ -235,6 +249,9 @@ def main() -> None:
             inputs_dir = Path(output_root) / "inputs"
             pdb_list_path = ds_cfg.get("pdb_list_path")
             pdb_list_resolved = _as_path(base_dir, pdb_list_path) if pdb_list_path else None
+            extra_csv = ds_cfg.get("extra_csv_paths") or []
+            extra_csv_resolved = [_as_path(base_dir, p) for p in extra_csv] if extra_csv else None
+            mut_col = ds_cfg.get("mutation_col")
             fasta_paths = build_dataset_fastas(
                 csv_path=csv_path,
                 output_dir=str(inputs_dir),
@@ -244,6 +261,8 @@ def main() -> None:
                 protein_chain_col=ds_cfg.get("protein_chain_col", "Protein chains"),
                 rna_chain_col=ds_cfg.get("rna_chain_col", "RNA chains"),
                 pdb_list_path=pdb_list_resolved,
+                extra_csv_paths=extra_csv_resolved,
+                mutation_col=mut_col,
             )
             pdb_dir = ds_cfg.get("pdb_dir")
             if pdb_dir:
@@ -254,6 +273,8 @@ def main() -> None:
                     protein_chain_col=ds_cfg.get("protein_chain_col", "Protein chains"),
                     rna_chain_col=ds_cfg.get("rna_chain_col", "RNA chains"),
                     pdb_list_path=pdb_list_resolved,
+                    extra_csv_paths=extra_csv_resolved,
+                    mutation_col=mut_col,
                 )
             cfg.setdefault("protein_sequence", {})
             cfg.setdefault("rna_sequence", {})
@@ -288,6 +309,7 @@ def main() -> None:
                     msa_list_resolved = Path(_as_path(base_dir, msa_list_path))
                     if not msa_list_resolved.exists():
                         rna_models["rna_msm"]["msa_list"] = fasta_paths["rna_msm_ids_unique"]
+                rna_models["rna_msm"].setdefault("rna_single_dir", fasta_paths["rna_single_dir"])
 
     if "protein_sequence" in cfg:
         run_protein_sequence(cfg["protein_sequence"], base_dir, output_root, device, allowed=selected)

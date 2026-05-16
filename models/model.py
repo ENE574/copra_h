@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from models.lora_tune import LoRAESM, LoRARiNALMo, ESMConfig, RiNALMoConfig
 import random
 from data.complex import SUPER_PROT_IDX, SUPER_RNA_IDX, SUPER_CPLX_IDX, SUPER_CHAIN_IDX
+from data.pia_physics_names import PIA_PHYSICS_NAMES
 
 from peft import (
     LoraConfig,
@@ -201,14 +202,14 @@ class ESM2RiNALMo(nn.Module):
                 "prot_seq": {"esm2": 1280, "prott5": 1024, "saprot": 1280},
                 "prot_struct": {"esm_if1": 512, "protbert": 1024, "protrek": 1024},
                 "rna_seq": {"rinalmo": 1280, "rna_fm": 640, "rna_msm": 768},
-                "rna_struct": {"ernie_rna": 768, "rhofold": 384, "rnabert": 120},
+                "rna_struct": {"rna_ernie": 768, "rhofold": 384, "rnabert": 120},
             }
 
             self._all_offline_models = {
                 "prot_seq": ["esm2", "prott5", "saprot"],
                 "prot_struct": ["esm_if1", "protbert", "protrek"],
                 "rna_seq": ["rinalmo", "rna_fm", "rna_msm"],
-                "rna_struct": ["ernie_rna", "rhofold", "rnabert"],
+                "rna_struct": ["rna_ernie", "rhofold", "rnabert"],
             }
 
             enabled = {
@@ -225,9 +226,11 @@ class ESM2RiNALMo(nn.Module):
                     enabled[group] = set()
                     disable_all_groups.add(group)
 
-            if "rna_ernie" in enabled["rna_struct"]:
-                enabled["rna_struct"].remove("rna_ernie")
-                enabled["rna_struct"].add("ernie_rna")
+            # Backward compatibility: allow either naming in configs.
+            # Prefer the canonical folder/model name: 'rna_ernie'.
+            if "ernie_rna" in enabled["rna_struct"]:
+                enabled["rna_struct"].remove("ernie_rna")
+                enabled["rna_struct"].add("rna_ernie")
             for group, all_ms in self._all_offline_models.items():
                 if len(enabled[group]) == 0 and group not in disable_all_groups:
                     enabled[group] = set(all_ms)
@@ -288,8 +291,8 @@ class ESM2RiNALMo(nn.Module):
         if pair_dim != self.complex_dim:
             self.z_proj = nn.Linear(pair_dim, self.complex_dim)
         
-        # Physical Decomposition Heads
-        self.physics_names = ['contact', 'electro', 'hydrophobic', 'stacking']
+        # PIA heads = FoldX ``Stability`` field names (see ``data/pia_physics_names``).
+        self.physics_names = list(PIA_PHYSICS_NAMES)
         self.physics_heads = nn.ModuleDict({
             name: nn.Sequential(
                 nn.Linear(self.complex_dim, self.feat_size), nn.ReLU(),
@@ -352,6 +355,12 @@ class ESM2RiNALMo(nn.Module):
         na_mask = input['na_mask']
 
         if self.use_offline_embeddings or bool(input.get("use_offline_embeddings", False)):
+            if "offline_embeddings" not in input:
+                raise ValueError(
+                    "offline_embeddings missing from batch but the model expects offline mode. "
+                    "Set use_offline_embeddings: true and offline_embedding_root in the dataset YAML "
+                    "(see config/datasets/PRA310.yml)."
+                )
             offline = input["offline_embeddings"]
 
             # Convert token-space offline embeddings -> residue-space per complex
@@ -430,7 +439,7 @@ class ESM2RiNALMo(nn.Module):
                 t, _ = _pad_list(rna_seq_list[m], max_rna)
                 rna_seq_3.append(_maybe_disable("rna_seq", m, _proj("rna_seq", m, t)))
             rna_struct_3 = []
-            for m in ["ernie_rna", "rhofold", "rnabert"]:
+            for m in ["rna_ernie", "rhofold", "rnabert"]:
                 t, _ = _pad_list(rna_struct_list[m], max_rna)
                 rna_struct_3.append(_maybe_disable("rna_struct", m, _proj("rna_struct", m, t)))
 
@@ -740,8 +749,14 @@ class ESM2RiNALMo(nn.Module):
                 
                 output_forward = self.pred_head(forward_embedding).squeeze(1)
                 output_inv = self.pred_head(inv_embedding).squeeze(1)
-                
-                return output_forward, output_inv
+
+                # Expose mutant pooled representation for PIA auxiliary loss in DDGModule
+                # (targets in batch are keyed to the mutant structure id).
+                return {
+                    "ddg_pred": output_forward,
+                    "ddg_pred_inv": output_inv,
+                    "pooled_mut": mut_embedding,
+                }
 
         else:
             raise NotImplementedError

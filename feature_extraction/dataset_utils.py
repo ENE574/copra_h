@@ -50,6 +50,28 @@ def _split_chain_sequences(seq_field: str) -> List[Tuple[str, str]]:
     return chains
 
 
+def _load_csvs_concat(csv_path: str, extra_csv_paths: Optional[List[str]] = None) -> pd.DataFrame:
+    paths: List[str] = [csv_path]
+    if extra_csv_paths:
+        paths.extend(extra_csv_paths)
+    dfs = [pd.read_csv(p) for p in paths]
+    return pd.concat(dfs, ignore_index=True)
+
+
+def _drop_echo_header_rows(df: pd.DataFrame, id_col: str) -> pd.DataFrame:
+    """Remove rows where the id column repeats the header label (duplicate header lines in CSV)."""
+    if id_col not in df.columns:
+        return df
+    return df[df[id_col].astype(str).str.strip() != id_col].copy()
+
+
+def _mcsm_train_stem_pdb_candidates(pdb_dir: Path, raw_pdb_id: str, mut: str) -> List[Path]:
+    """See ``_mutant_structure_path_candidates`` docstring (training-aligned stem)."""
+    structure_key = f"{raw_pdb_id}_{mut}" if mut else raw_pdb_id
+    stem = structure_key.split("_")[0]
+    return [pdb_dir / f"{stem}{suf}" for suf in (".pdb", ".cif")]
+
+
 def build_dataset_fastas(
     csv_path: str,
     output_dir: str,
@@ -59,6 +81,8 @@ def build_dataset_fastas(
     protein_chain_col: str = "Protein chains",
     rna_chain_col: str = "RNA chains",
     pdb_list_path: Optional[str] = None,
+    extra_csv_paths: Optional[List[str]] = None,
+    mutation_col: Optional[str] = None,
 ) -> Dict[str, str]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -69,7 +93,10 @@ def build_dataset_fastas(
     protein_single_dir.mkdir(parents=True, exist_ok=True)
     rna_single_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(csv_path)
+    df = _load_csvs_concat(csv_path, extra_csv_paths)
+    df = _drop_echo_header_rows(df, id_col)
+    if mutation_col and mutation_col in df.columns:
+        df = df.drop_duplicates(subset=[id_col, mutation_col], keep="first").copy()
     if pdb_list_path:
         allowed_pairs = set(_parse_pdb_list_entries(pdb_list_path))
         if not allowed_pairs:
@@ -96,7 +123,11 @@ def build_dataset_fastas(
         rna_fasta, "w", encoding="utf-8"
     ) as r_handle:
         for _, row in df.iterrows():
-            complex_id = str(row[id_col])
+            pdb_key = str(row[id_col]).strip()
+            if mutation_col and mutation_col in row.index and str(row.get(mutation_col, "")).strip():
+                complex_id = f"{pdb_key}_{str(row[mutation_col]).strip()}"
+            else:
+                complex_id = pdb_key
             prot_chains = _split_chain_sequences(row[protein_seq_col])
             rna_chains = _split_chain_sequences(row[rna_seq_col])
             for chain, seq in prot_chains:
@@ -145,6 +176,8 @@ def build_dataset_pdb_list(
     protein_chain_col: str,
     rna_chain_col: str,
     pdb_list_path: Optional[str] = None,
+    extra_csv_paths: Optional[List[str]] = None,
+    mutation_col: Optional[str] = None,
 ) -> Dict[str, List[str]]:
     pdb_dir = Path(pdb_dir)
 
@@ -176,7 +209,11 @@ def build_dataset_pdb_list(
             "missing": missing,
         }
 
-    df = pd.read_csv(csv_path)
+    df = _load_csvs_concat(csv_path, extra_csv_paths)
+    df = _drop_echo_header_rows(df, id_col)
+    if mutation_col and mutation_col in df.columns:
+        df = df.drop_duplicates(subset=[id_col, mutation_col], keep="first").copy()
+
     for _, row in df.iterrows():
         pdb_id = str(row.get(id_col, "")).strip()
         prot_chain = str(row.get(protein_chain_col, "")).strip()
@@ -187,15 +224,25 @@ def build_dataset_pdb_list(
             continue
         if not rna_chain or rna_chain.lower() == "nan":
             continue
+        mut = ""
+        if mutation_col and mutation_col in row.index:
+            mut = str(row.get(mutation_col, "") or "").strip()
+        if mutation_col:
+            candidates = _mcsm_train_stem_pdb_candidates(pdb_dir, pdb_id, mut)
+        else:
+            candidates = []
+            for suf in (".cif", ".pdb"):
+                candidates.append(pdb_dir / f"{pdb_id}_{prot_chain}_{rna_chain}{suf}")
+                candidates.append(pdb_dir / f"{pdb_id}{suf}")
         found = False
-        for suffix in (".cif", ".pdb"):
-            candidate = pdb_dir / f"{pdb_id}_{prot_chain}_{rna_chain}{suffix}"
+        for candidate in candidates:
             if candidate.exists():
                 pdb_files.append(str(candidate))
                 found = True
                 break
         if not found:
-            missing.append(f"{pdb_id}_{prot_chain}_{rna_chain}")
+            stem = (f"{pdb_id}_{mut}" if mut else pdb_id).split("_")[0]
+            missing.append(stem)
 
     return {
         "pdb_files": sorted(set(pdb_files)),

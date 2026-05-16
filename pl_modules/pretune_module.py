@@ -8,6 +8,7 @@ import pandas as pd
 import pytorch_lightning as pl
 from models import ModelRegister
 from utils.metrics import ScalarMetricAccumulator
+from utils.torch_compat import torch_load_compat
                             
 def get_model(model_args:dict=None):
     register = ModelRegister()
@@ -48,14 +49,29 @@ class PretuneModule(pl.LightningModule):
         return tqdm_dict
 
     def configure_optimizers(self):
-        if self.optimizers_cfg.type == 'adam':
-            optimizer = torch.optim.Adam(self.parameters(), 
-                                         lr=self.optimizers_cfg.lr, 
-                                         betas=(self.optimizers_cfg.beta1, self.optimizers_cfg.beta2, ))
-        elif self.optimizers_cfg.type == 'sgd':
-            optimizer = torch.optim.SGD(self.parameters(), lr=self.optimizers_cfg.lr)
-        elif self.optimizers_cfg.type == 'rmsprop':
-            optimizer = torch.optim.RMSprop(self.parameters(), lr=self.optimizers_cfg.lr)
+        opt_type = str(self.optimizers_cfg.type).lower()
+        wd = float(getattr(self.optimizers_cfg, "weight_decay", 0.0))
+        b1 = float(getattr(self.optimizers_cfg, "beta1", 0.9))
+        b2 = float(getattr(self.optimizers_cfg, "beta2", 0.999))
+        betas = (b1, b2)
+        if opt_type == "adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=self.optimizers_cfg.lr,
+                betas=betas,
+                weight_decay=wd,
+            )
+        elif opt_type == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.optimizers_cfg.lr,
+                betas=betas,
+                weight_decay=wd,
+            )
+        elif opt_type == "sgd":
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.optimizers_cfg.lr, weight_decay=wd)
+        elif opt_type == "rmsprop":
+            optimizer = torch.optim.RMSprop(self.parameters(), lr=self.optimizers_cfg.lr, weight_decay=wd)
         else:
             raise NotImplementedError('Optimizer not supported: %s' % self.optimizers_cfg.type)
 
@@ -76,7 +92,7 @@ class PretuneModule(pl.LightningModule):
 
         if self.model_args.resume is not None:
             print("Resuming from checkloint: %s" % self.model_args.resume)
-            ckpt = torch.load(self.model_args.resume, map_location=self.model_args.device)
+            ckpt = torch_load_compat(self.model_args.resume, map_location=self.model_args.device)
             it_first = ckpt['iteration']
             lsd_result = self.model.load_state_dict(ckpt['state_dict'], strict=False)
             print('Missing keys (%d): %s' % (len(lsd_result.missing_keys), ', '.join(lsd_result.missing_keys)))

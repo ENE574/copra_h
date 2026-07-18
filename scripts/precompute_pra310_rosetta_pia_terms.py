@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Precompute whole-complex Rosetta score terms for PRA310, written under **FoldX-aligned**
-PIA column names (``Electro``, ``Energy_SolvP``, ``Energy_SolvH``, ``Energy_VdW``).
+PIA column names (``Electro``, ``Energy_SolvP``, ``Energy_SolvH``, ``Energy_VdW``, ``Energy_Hbond``).
 
 Uses the same Rosetta→label bridge as ``data/pyrosetta_physics.rosetta_terms_to_foldx_pia_labels``.
 
 Designed to run in a minimal conda env, e.g.:
   conda activate pyrosetta_only
   python scripts/precompute_pra310_rosetta_pia_terms.py \\
-    --csv /media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310.csv \\
-    --data-root /media/SSD0/csd/lrg/datasets/PRA310/PDBs \\
-    --output /media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310_rosetta_pia_terms.csv
+    --csv /media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310.csv \\
+    --data-root /media/SSD0/csd/lrg/copra_h/datasets/PRA310/PDBs \\
+    --output /media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310_rosetta_pia_terms.csv
 
 Requires PyRosetta. Default init adds ``-ignore_unrecognized_res``.
 """
@@ -62,19 +62,19 @@ def main() -> int:
     p.add_argument(
         "--csv",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310.csv"),
         help="Dataset CSV (must contain PDB column; optional MUTATION if --mut).",
     )
     p.add_argument(
         "--data-root",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/PDBs"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/PDBs"),
         help="Directory containing <PDB>.pdb (same as data_root in PRA310.yml).",
     )
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310_rosetta_pia_terms.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310_rosetta_pia_terms.csv"),
         help="Output CSV path.",
     )
     p.add_argument("--pdb-col", default="PDB", help="Column name for PDB id (default: PDB).")

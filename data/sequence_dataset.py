@@ -1,16 +1,25 @@
 from torch.utils.data import Dataset
 from data.register import DataRegister
 import esm
-from rinalmo.data.constants import *
-from rinalmo.data.alphabet import Alphabet
 import torch
 from tqdm import tqdm
 R = DataRegister()
 
-na_alphabet_config = {
-    "standard_tkns": RNA_TOKENS,
-    "special_tkns": [CLS_TKN, PAD_TKN, EOS_TKN, UNK_TKN, MASK_TKN],
-}
+
+def _build_na_alphabet():
+    from rinalmo.data.alphabet import Alphabet
+    from rinalmo.data.constants import (
+        CLS_TKN,
+        EOS_TKN,
+        MASK_TKN,
+        PAD_TKN,
+        RNA_TOKENS,
+        UNK_TKN,
+    )
+    return Alphabet(
+        standard_tkns=RNA_TOKENS,
+        special_tkns=[CLS_TKN, PAD_TKN, EOS_TKN, UNK_TKN, MASK_TKN],
+    )
 
 
 CLS_TOKEN_IDX = 0
@@ -32,7 +41,7 @@ class SequenceDataset(Dataset):
         self.type = 'reg'
         self.diskcache = diskcache
         self.prot_alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
-        self.na_alphabet = Alphabet(**na_alphabet_config)
+        self.na_alphabet = _build_na_alphabet()
         self.load_data()
     
     def load_data(self):
@@ -90,7 +99,7 @@ class CustomSeqCollate(object):
         size = len(batch)
         labels = torch.tensor([item['labels'] for item in batch], dtype=torch.float32)
         prot_alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
-        na_alphabet = Alphabet(**na_alphabet_config)
+        na_alphabet = _build_na_alphabet()
         # print("Batch:", batch)
         # for item in batch:
         #     for seq  in item['na_seqs']:

@@ -11,12 +11,10 @@ class SubtractCOM(object):
     def __call__(self, data):
         pos = data['pos_atoms']
         mask = data['mask_atoms']
-        if mask is None:
-            center = np.zeros(3)
-        elif mask.sum() == 0:
-            center = np.zeros(3)
+        if mask is None or mask.sum() == 0:
+            center = torch.zeros(3, dtype=pos.dtype, device=pos.device)
         else:
-            center = pos[mask].mean(axis=0)
-        data['pos_atoms'] = pos - center[None, None, :]
+            center = pos[mask].mean(dim=0)
+        data['pos_atoms'] = pos - center.view(1, 1, 3)
         return data
     

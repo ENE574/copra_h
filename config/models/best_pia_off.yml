@@ -2,7 +2,7 @@ resume: null
 model:
   model_type: copra
   esm_type: 650M
-  embedding_root: /media/SSD0/csd/lrg/outputs/feature_extraction_PRA310
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PRA310
   seq_prot_models:
     - esm2
     - prott5
@@ -60,6 +60,7 @@ train:
     - Energy_SolvP
     - Energy_SolvH
     - Energy_VdW
+    - Energy_Hbond
   physics_aux_standardize: true
   physics_aux_clip: 0.0
   physics_aux_stop_grad: true

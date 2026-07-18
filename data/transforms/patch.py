@@ -109,6 +109,45 @@ class SelectedRegionFixedSizePatch(object):
         data_patch = _index_select_data(data, patch_idx)
         return data_patch
     
+@register_transform('mutation_centered_patch')
+class MutationCenteredPatch(object):
+    """Select residues closest to the mutation site(s); fallback to interface patch."""
+
+    def __init__(self, patch_size=128, focus_attr='mut_identifier'):
+        super().__init__()
+        self.patch_size = patch_size
+        self.focus_attr = focus_attr
+
+    def __call__(self, data):
+        select_flag = data.get(self.focus_attr)
+        if select_flag is None:
+            raise KeyError(
+                "mutation_centered_patch requires '{}' in data (mut: true datasets only)".format(
+                    self.focus_attr
+                )
+            )
+        select_flag = select_flag.bool()
+        pos_CB = _get_CB_positions(data['pos_atoms'], data['mask_atoms'])
+
+        if select_flag.sum() == 0:
+            atoms_dist_min = data['atom_min_dist']
+            identifier = data['identifier']
+            tmp = atoms_dist_min[identifier == 0]
+            interface_distance = tmp[:, identifier == 1]
+            prot_min_dist = interface_distance.min(dim=1)[0]
+            rna_min_dist = interface_distance.transpose(0, 1).min(dim=1)[0]
+            dist_from_focus = torch.cat([prot_min_dist, rna_min_dist], dim=0)
+        else:
+            pos_sel = pos_CB[select_flag]
+            dist_from_focus = torch.cdist(pos_CB, pos_sel).min(dim=1)[0]
+
+        patch_idx = torch.argsort(dist_from_focus)[: self.patch_size]
+        patch_idx, _ = torch.sort(patch_idx)
+        data_patch = _index_select_complex(data, patch_idx)
+        data_patch['patch_idx'] = patch_idx
+        return data_patch
+
+
 @register_transform('selected_region_with_distmap')
 class SelectedRegionWithDistmap(object):
 

@@ -19,17 +19,17 @@ def main() -> int:
     p.add_argument(
         "--pra201-csv",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA201.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA201.csv"),
     )
     p.add_argument(
         "--full-foldx-csv",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310_foldx_pia_terms.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310_foldx_pia_terms.csv"),
     )
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA201_foldx_pia_terms.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA201_foldx_pia_terms.csv"),
     )
     p.add_argument("--pdb-col", default="PDB", help="Column name in PRA201 CSV for structure id (matches sample_id).")
     args = p.parse_args()

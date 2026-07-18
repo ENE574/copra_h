@@ -20,6 +20,24 @@ from .base_constants import (
     FILL_VALUE
 )
 
+_DNA_RESIDUE_TO_NT = {
+    "DA": "A",
+    "DC": "C",
+    "DG": "G",
+    "DT": "U",
+    "DU": "U",
+}
+
+
+def normalize_nucleotide_residue(name: str) -> str:
+    """Map DNA residue names (DA/DC/DG/DT) and T to RNA alphabet (A/C/G/U)."""
+    name = str(name).strip().upper()
+    if name in _DNA_RESIDUE_TO_NT:
+        return _DNA_RESIDUE_TO_NT[name]
+    if name == "T":
+        return "U"
+    return name
+
 def pdb_to_tensor(
         filepath: str, 
         return_sec_struct: bool = True,
@@ -71,7 +89,7 @@ def pdb_to_tensor(
         df["residue_id"] = df.residue_id + ":" + df.insertion
 
     # get sequence
-    nt_list = [res.split(":")[1] for res in df.residue_id.unique()]
+    nt_list = [normalize_nucleotide_residue(res.split(":")[1]) for res in df.residue_id.unique()]
     # replace non-standard nucleotides with placeholder
     nt_list = [nt if nt in RNA_NUCLEOTIDES else "_" for nt in nt_list]
     sequence = "".join(nt_list)
@@ -173,7 +191,7 @@ def chain_to_array(
     df = df[df['residue_name'] != 'HOH']
     df = df[df['record_name'] != 'HETATM']
     # get sequence
-    nt_list = [res.split(":")[1] for res in df.residue_id.unique()]
+    nt_list = [normalize_nucleotide_residue(res.split(":")[1]) for res in df.residue_id.unique()]
     # replace non-standard nucleotides with placeholder
     nt_list = [nt if nt in RNA_NUCLEOTIDES else "_" for nt in nt_list]
     res_nb = np.array([int(res.split(":")[2]) for res in df.residue_id.unique()])

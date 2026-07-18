@@ -3,9 +3,9 @@
 #   python scripts/precompute_pra310_foldx_pia_terms.py
 
 dataset_type: 'structure_dataset'
-df_path: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310.csv'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310.csv'
 batch_size: 8
-data_root: '/media/SSD0/csd/lrg/datasets/PRA310/PDBs'
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/PDBs'
 num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
@@ -13,15 +13,15 @@ col_prot: 'Protein sequences'
 col_na: 'RNA sequences'
 col_label: '△G(kcal/mol)'
 pin_memory: True
-cache_dir: '/media/SSD0/csd/lrg/cache/pra310_foldx_csv'
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/pra310_foldx_csv'
 loss_type: regression
 strategy: separate
 
 use_offline_embeddings: true
-offline_embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_PRA310'
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PRA310'
 
-# CSV columns: Electro, Energy_SolvP, Energy_SolvH, Energy_VdW (see scripts/precompute_pra310_foldx_pia_terms.py)
-physics_targets_csv: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310_foldx_pia_terms.csv'
+# CSV columns: Electro, Energy_SolvP, Energy_SolvH, Energy_VdW, Energy_Hbond (see scripts/precompute_pra310_foldx_pia_terms.py)
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310_foldx_pia_terms.csv'
 
 transform:
   - type: select_atom

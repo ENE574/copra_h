@@ -83,6 +83,8 @@ def build_dataset_fastas(
     pdb_list_path: Optional[str] = None,
     extra_csv_paths: Optional[List[str]] = None,
     mutation_col: Optional[str] = None,
+    partner_seq_col: Optional[str] = None,
+    partner_chain_col: Optional[str] = None,
 ) -> Dict[str, str]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -97,13 +99,22 @@ def build_dataset_fastas(
     df = _drop_echo_header_rows(df, id_col)
     if mutation_col and mutation_col in df.columns:
         df = df.drop_duplicates(subset=[id_col, mutation_col], keep="first").copy()
+
+    # Determine if partner is protein (PPI case): partner_seq_col is used to
+    # signal that the "na" side is actually a second protein chain.  In that
+    # case partner sequences must be written with ``_prot_`` names so offline
+    # embedding loaders (partner_use_protein_embeddings=True) can find them
+    # under protein_sequence / protein_structure.
+    has_protein_partner = bool(partner_seq_col and partner_seq_col in df.columns)
+
     if pdb_list_path:
         allowed_pairs = set(_parse_pdb_list_entries(pdb_list_path))
         if not allowed_pairs:
             raise ValueError(f"No valid entries parsed from pdb_list_path: {pdb_list_path}")
         id_series = df[id_col].astype(str).str.strip()
         prot_series = df[protein_chain_col].astype(str).str.strip()
-        rna_series = df[rna_chain_col].astype(str).str.strip()
+        rna_col = partner_chain_col if has_protein_partner else rna_chain_col
+        rna_series = df[rna_col].astype(str).str.strip()
         pair_tuples = list(zip(id_series, prot_series, rna_series))
         mask = [
             (pdb_id, prot_chain, rna_chain) in allowed_pairs
@@ -129,18 +140,29 @@ def build_dataset_fastas(
             else:
                 complex_id = pdb_key
             prot_chains = _split_chain_sequences(row[protein_seq_col])
-            rna_chains = _split_chain_sequences(row[rna_seq_col])
             for chain, seq in prot_chains:
                 name = safe_name(f"{complex_id}_prot_{chain or 'X'}")
                 p_handle.write(f">{name}\n{seq}\n")
                 with open(protein_single_dir / f"{name}.fasta", "w", encoding="utf-8") as f_handle:
                     f_handle.write(f">{name}\n{seq}\n")
-            for chain, seq in rna_chains:
-                name = safe_name(f"{complex_id}_rna_{chain or 'X'}")
-                rna_ids.append(name)
-                r_handle.write(f">{name}\n{seq}\n")
-                with open(rna_single_dir / f"{name}.fasta", "w", encoding="utf-8") as f_handle:
-                    f_handle.write(f">{name}\n{seq}\n")
+
+            if has_protein_partner:
+                # PPI: partner is also a protein — write as _prot_ so it gets
+                # protein embeddings and can be found by partner_use_protein_embeddings.
+                partner_chains = _split_chain_sequences(row[partner_seq_col])
+                for chain, seq in partner_chains:
+                    name = safe_name(f"{complex_id}_prot_{chain or 'X'}")
+                    p_handle.write(f">{name}\n{seq}\n")
+                    with open(protein_single_dir / f"{name}.fasta", "w", encoding="utf-8") as f_handle:
+                        f_handle.write(f">{name}\n{seq}\n")
+            else:
+                rna_chains = _split_chain_sequences(row[rna_seq_col])
+                for chain, seq in rna_chains:
+                    name = safe_name(f"{complex_id}_rna_{chain or 'X'}")
+                    rna_ids.append(name)
+                    r_handle.write(f">{name}\n{seq}\n")
+                    with open(rna_single_dir / f"{name}.fasta", "w", encoding="utf-8") as f_handle:
+                        f_handle.write(f">{name}\n{seq}\n")
 
     rna_id_list = output_dir / "rna_msm_ids.txt"
     with open(rna_id_list, "w", encoding="utf-8") as handle:
@@ -178,6 +200,7 @@ def build_dataset_pdb_list(
     pdb_list_path: Optional[str] = None,
     extra_csv_paths: Optional[List[str]] = None,
     mutation_col: Optional[str] = None,
+    partner_chain_col: Optional[str] = None,
 ) -> Dict[str, List[str]]:
     pdb_dir = Path(pdb_dir)
 
@@ -214,15 +237,21 @@ def build_dataset_pdb_list(
     if mutation_col and mutation_col in df.columns:
         df = df.drop_duplicates(subset=[id_col, mutation_col], keep="first").copy()
 
+    has_partner = bool(partner_chain_col and partner_chain_col in df.columns)
+
     for _, row in df.iterrows():
         pdb_id = str(row.get(id_col, "")).strip()
         prot_chain = str(row.get(protein_chain_col, "")).strip()
         rna_chain = str(row.get(rna_chain_col, "")).strip()
+        partner_chain = str(row.get(partner_chain_col or "", "")).strip() if has_partner else ""
         if not pdb_id or pdb_id.lower() == "nan":
             continue
         if not prot_chain or prot_chain.lower() == "nan":
             continue
-        if not rna_chain or rna_chain.lower() == "nan":
+        # For PPI (has_partner), the partner_chain is the "rna_chain" equivalent
+        if has_partner and not partner_chain:
+            continue
+        if not has_partner and (not rna_chain or rna_chain.lower() == "nan"):
             continue
         mut = ""
         if mutation_col and mutation_col in row.index:
@@ -232,7 +261,10 @@ def build_dataset_pdb_list(
         else:
             candidates = []
             for suf in (".cif", ".pdb"):
-                candidates.append(pdb_dir / f"{pdb_id}_{prot_chain}_{rna_chain}{suf}")
+                if has_partner:
+                    candidates.append(pdb_dir / f"{pdb_id}_{prot_chain}_{partner_chain}{suf}")
+                else:
+                    candidates.append(pdb_dir / f"{pdb_id}_{prot_chain}_{rna_chain}{suf}")
                 candidates.append(pdb_dir / f"{pdb_id}{suf}")
         found = False
         for candidate in candidates:

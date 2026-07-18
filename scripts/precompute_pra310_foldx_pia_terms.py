@@ -142,13 +142,13 @@ def main() -> int:
     p.add_argument(
         "--csv",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310.csv"),
     )
-    p.add_argument("--data-root", type=Path, default=Path("/media/SSD0/csd/lrg/datasets/PRA310/PDBs"))
+    p.add_argument("--data-root", type=Path, default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/PDBs"))
     p.add_argument(
         "--output",
         type=Path,
-        default=Path("/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310_foldx_pia_terms.csv"),
+        default=Path("/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310_foldx_pia_terms.csv"),
     )
     p.add_argument("--pdb-col", default="PDB")
     p.add_argument("--mut", action="store_true")

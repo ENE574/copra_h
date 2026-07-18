@@ -1,7 +1,7 @@
 dataset_type: 'structure_dataset'
-df_path: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA310.csv'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA310.csv'
 batch_size: 8
-data_root: '/media/SSD0/csd/lrg/datasets/PRA310/PDBs'
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/PDBs'
 num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
@@ -9,13 +9,21 @@ col_prot: 'Protein sequences'
 col_na: 'RNA sequences'
 col_label: '△G(kcal/mol)'
 pin_memory: True
-cache_dir: '/media/SSD0/csd/lrg/cache/pra310'
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/pra310'
 loss_type: regression
 strategy: separate
 
-# Use precomputed embeddings in ./outputs/feature_extraction_PRA310 (12 models, 4 groups)
+# Use precomputed embeddings (4 models, 4 groups: esm2 / esm_if1 / rna_fm / rhofold)
 use_offline_embeddings: true
-offline_embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_PRA310'
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PRA310'
+seq_prot_models:
+  - esm2
+seq_rna_models:
+  - rna_fm
+str_prot_models:
+  - esm_if1
+str_rna_models:
+  - rhofold
 
 transform:
   - type: select_atom

@@ -263,6 +263,8 @@ def main() -> None:
                 pdb_list_path=pdb_list_resolved,
                 extra_csv_paths=extra_csv_resolved,
                 mutation_col=mut_col,
+                partner_seq_col=ds_cfg.get("partner_seq_col"),
+                partner_chain_col=ds_cfg.get("partner_chain_col"),
             )
             pdb_dir = ds_cfg.get("pdb_dir")
             if pdb_dir:
@@ -275,23 +277,34 @@ def main() -> None:
                     pdb_list_path=pdb_list_resolved,
                     extra_csv_paths=extra_csv_resolved,
                     mutation_col=mut_col,
+                    partner_chain_col=ds_cfg.get("partner_chain_col"),
                 )
             cfg.setdefault("protein_sequence", {})
             cfg.setdefault("rna_sequence", {})
             cfg.setdefault("rna_structure", {})
             cfg.setdefault("protein_structure", {})
+            cfg.setdefault("dna_sequence", {})
+            cfg.setdefault("dna_structure", {})
             if not cfg["protein_sequence"].get("fasta"):
                 cfg["protein_sequence"]["fasta"] = fasta_paths["protein_fasta"]
             if not cfg["rna_sequence"].get("fasta"):
                 cfg["rna_sequence"]["fasta"] = fasta_paths["rna_fasta"]
+            if not cfg["dna_sequence"].get("fasta"):
+                cfg["dna_sequence"]["fasta"] = fasta_paths["rna_fasta"]
             if not cfg["rna_structure"].get("fasta"):
                 cfg["rna_structure"]["fasta"] = fasta_paths["rna_fasta"]
             if not cfg["protein_structure"].get("pdb_dir"):
                 cfg["protein_structure"]["pdb_dir"] = _as_path(base_dir, ds_cfg.get("pdb_dir"))
             if not cfg["protein_structure"].get("fasta"):
                 cfg["protein_structure"]["fasta"] = fasta_paths["protein_fasta"]
+            if not cfg["dna_structure"].get("fasta"):
+                cfg["dna_structure"]["fasta"] = fasta_paths["rna_fasta"]
+            if not cfg["dna_structure"].get("pdb_dir"):
+                cfg["dna_structure"]["pdb_dir"] = _as_path(base_dir, ds_cfg.get("pdb_dir"))
             if pdb_dir and not cfg["protein_structure"].get("pdb_list"):
                 cfg["protein_structure"]["pdb_list"] = pdb_info["pdb_files"]
+            if pdb_dir and not cfg["dna_structure"].get("pdb_list"):
+                cfg["dna_structure"]["pdb_list"] = pdb_info["pdb_files"]
             models_cfg = cfg["protein_structure"].setdefault("models", {})
             if "alphafold2" in models_cfg:
                 if not models_cfg["alphafold2"].get("fasta"):
@@ -319,6 +332,60 @@ def main() -> None:
         run_rna_sequence(cfg["rna_sequence"], base_dir, output_root, device, allowed=selected)
     if "rna_structure" in cfg:
         run_rna_structure(cfg["rna_structure"], base_dir, output_root, device, allowed=selected)
+    if "dna_sequence" in cfg:
+        run_dna_sequence(cfg["dna_sequence"], base_dir, output_root, device, allowed=selected)
+    if "dna_structure" in cfg:
+        run_dna_structure(cfg["dna_structure"], base_dir, output_root, device, allowed=selected)
+
+
+def run_dna_sequence(cfg: dict, base_dir: Path, output_root: Path, device: str, allowed: Optional[Set[str]] = None) -> None:
+    fasta = _as_path(base_dir, cfg.get("fasta"))
+    models = cfg.get("models", {})
+    if fasta and models.get("dnabert2", {}).get("enabled", False) and _allowed("dnabert2", allowed):
+        model_cfg = models.get("dnabert2", {})
+        extractors.extract_dnabert2(
+            fasta_path=fasta,
+            output_dir=str(output_root / "dna_sequence" / "dnabert2"),
+            device=device,
+            model_path=_as_path(base_dir, model_cfg.get("model_path", "weights/DNABERT2_weights")),
+            batch_size=model_cfg.get("batch_size", 1),
+        )
+    if fasta and models.get("hyenadna", {}).get("enabled", False) and _allowed("hyenadna", allowed):
+        model_cfg = models.get("hyenadna", {})
+        extractors.extract_hyenadna(
+            fasta_path=fasta,
+            output_dir=str(output_root / "dna_sequence" / "hyenadna"),
+            device=device,
+            model_path=_as_path(base_dir, model_cfg.get("model_path", "weights/HyenaDNA_weights")),
+            batch_size=model_cfg.get("batch_size", 1),
+        )
+    if fasta and models.get("nucleotide_transformer", {}).get("enabled", False) and _allowed("nucleotide_transformer", allowed):
+        model_cfg = models.get("nucleotide_transformer", {})
+        extractors.extract_nucleotide_transformer(
+            fasta_path=fasta,
+            output_dir=str(output_root / "dna_sequence" / "nucleotide_transformer"),
+            device=device,
+            model_path=_as_path(base_dir, model_cfg.get("model_path", "weights/NucleotideTransformer_weights")),
+            batch_size=model_cfg.get("batch_size", 1),
+        )
+
+
+def run_dna_structure(cfg: dict, base_dir: Path, output_root: Path, device: str, allowed: Optional[Set[str]] = None) -> None:
+    models = cfg.get("models", {})
+    fasta = _as_path(base_dir, cfg.get("fasta"))
+    pdb_dir = _as_path(base_dir, cfg.get("pdb_dir"))
+    
+    if models.get("rf2na", {}).get("enabled", False) and _allowed("rf2na", allowed):
+        model_cfg = models.get("rf2na", {})
+        extractors.extract_rf2na(
+            pdb_dir=str(pdb_dir),
+            output_dir=str(output_root / "dna_structure" / "rf2na"),
+            device=device,
+            model_path=_as_path(base_dir, model_cfg.get("model_path", "weights/RoseTTAFold2NA_weights")),
+            chain_id=model_cfg.get("chain_id"),
+            pdb_list=model_cfg.get("pdb_list"),
+            protein_single_dir=_as_path(base_dir, model_cfg.get("protein_single_dir")) if model_cfg.get("protein_single_dir") else None,
+        )
 
 
 if __name__ == "__main__":

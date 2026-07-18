@@ -874,6 +874,8 @@ def extract_esm_if1(
 ) -> None:
     import esm
     from esm.inverse_folding import util as if_util
+    import argparse as _argparse
+    torch.serialization.add_safe_globals([_argparse.Namespace])
 
     if model_location:
         model, alphabet = esm.pretrained.load_model_and_alphabet(model_location)
@@ -1852,6 +1854,296 @@ def parse_alphafold2_features(output_dir: str, save_dir: str) -> None:
         if payload:
             out_path = save_dir / f"{result_path.parent.name}_{result_path.stem}.npz"
             save_numpy_payload(out_path, payload)
+
+
+def extract_dnabert2(
+    fasta_path: str,
+    output_dir: str,
+    device: str = "cuda",
+    model_path: str = "weights/DNABERT2_weights",
+    batch_size: int = 1,
+) -> None:
+    import os
+
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+    from transformers import AutoTokenizer, AutoModel, AutoConfig
+
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    model = AutoModel.from_pretrained(model_path, config=config, trust_remote_code=True)
+    model.eval()
+    device_obj = _device_from_string(device)
+    model = model.to(device_obj)
+
+    records = read_fasta(fasta_path)
+    output_dir = ensure_dir(output_dir)
+
+    with torch.no_grad():
+        for batch in chunked(records, batch_size):
+            labels = [lab for lab, _ in batch]
+            seqs = [seq for _, seq in batch]
+            
+            inputs = tokenizer(
+                seqs,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+                add_special_tokens=False,
+            ).to(device_obj)
+            
+            outputs = model(**inputs, output_hidden_states=True)
+            # DNABERT-2 can return a tuple; handle both tuple and named output
+            token_embeddings = outputs[0] if isinstance(outputs, tuple) else outputs.last_hidden_state
+            
+            for i, (label, seq) in enumerate(batch):
+                seq_len = len(seq)
+                residue_rep = token_embeddings[i, :seq_len].detach().cpu()
+                seq_rep = residue_rep.mean(0)
+                payload = {
+                    "token_embeddings": residue_rep,
+                    "sequence_embedding": seq_rep,
+                }
+                save_tensor_payload(output_dir / f"{safe_name(label)}.pt", payload)
+
+
+def extract_hyenadna(
+    fasta_path: str,
+    output_dir: str,
+    device: str = "cuda",
+    model_path: str = "weights/HyenaDNA_weights",
+    batch_size: int = 1,
+) -> None:
+    from transformers import AutoTokenizer, AutoModel
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModel.from_pretrained(model_path)
+    model.eval()
+    device_obj = _device_from_string(device)
+    model = model.to(device_obj)
+
+    records = read_fasta(fasta_path)
+    output_dir = ensure_dir(output_dir)
+
+    with torch.no_grad():
+        for batch in chunked(records, batch_size):
+            labels = [lab for lab, _ in batch]
+            seqs = [seq for _, seq in batch]
+            
+            inputs = tokenizer(
+                seqs,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            ).to(device_obj)
+            
+            outputs = model(**inputs)
+            token_embeddings = outputs.last_hidden_state
+            
+            for i, (label, seq) in enumerate(batch):
+                seq_len = len(seq)
+                residue_rep = token_embeddings[i, :seq_len].detach().cpu()
+                seq_rep = residue_rep.mean(0)
+                payload = {
+                    "token_embeddings": residue_rep,
+                    "sequence_embedding": seq_rep,
+                }
+                save_tensor_payload(output_dir / f"{safe_name(label)}.pt", payload)
+
+
+def extract_nucleotide_transformer(
+    fasta_path: str,
+    output_dir: str,
+    device: str = "cuda",
+    model_path: str = "weights/NucleotideTransformer_weights",
+    batch_size: int = 1,
+) -> None:
+    from transformers import AutoTokenizer, AutoModelForMaskedLM
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForMaskedLM.from_pretrained(
+        model_path, trust_remote_code=True, output_hidden_states=True
+    )
+    model.eval()
+    device_obj = _device_from_string(device)
+    model = model.to(device_obj)
+
+    records = read_fasta(fasta_path)
+    output_dir = ensure_dir(output_dir)
+
+    with torch.no_grad():
+        for batch in chunked(records, batch_size):
+            labels = [lab for lab, _ in batch]
+            seqs = [seq for _, seq in batch]
+
+            inputs = tokenizer(
+                seqs,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+                add_special_tokens=False,
+            ).to(device_obj)
+
+            outputs = model(**inputs, output_hidden_states=True)
+            # Use the last hidden state from the LM head's hidden states
+            # Nucleotide Transformer returns hidden_states tuple, embeddings from last layer
+            hidden = outputs.hidden_states  # tuple of (B, T, D)
+            last_hidden = hidden[-1]  # (B, T, D), D=1280 for 500M model
+
+            for i, (label, seq) in enumerate(batch):
+                seq_len = len(seq)
+                residue_rep = last_hidden[i, :seq_len].detach().cpu()
+                seq_rep = residue_rep.mean(0)
+                payload = {
+                    "token_embeddings": residue_rep,
+                    "sequence_embedding": seq_rep,
+                }
+                save_tensor_payload(output_dir / f"{safe_name(label)}.pt", payload)
+
+
+def extract_rf2na(
+    pdb_dir: str,
+    output_dir: str,
+    device: str = "cuda",
+    model_path: str = "weights/RoseTTAFold2NA_weights",
+    chain_id: Optional[str] = None,
+    pdb_list: Optional[Iterable[str]] = None,
+    protein_single_dir: Optional[str] = None,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    sys.path.append(str(repo_root / "RoseTTAFold2NA"))
+    
+    device_obj = _device_from_string(device)
+    output_dir_p = ensure_dir(output_dir)
+    pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
+
+    single_root = Path(protein_single_dir) if protein_single_dir else _protein_single_inputs_dir(output_dir_p)
+    use_protein_single = single_root.is_dir() and (
+        any(single_root.glob("*.fasta")) or any(single_root.glob("*.fa"))
+    )
+
+    try:
+        from rf2na.model import RoseTTAFold2NA
+        # If model_path is a directory, find the first .pt file inside
+        model_path_p = Path(model_path)
+        if model_path_p.is_dir():
+            pt_files = sorted(model_path_p.glob("*.pt"))
+            if not pt_files:
+                raise FileNotFoundError(f"No .pt checkpoint found in {model_path}")
+            model_path = str(pt_files[0])
+        model = RoseTTAFold2NA.load_from_checkpoint(model_path)
+        model.eval()
+        model = model.to(device_obj)
+    except Exception as e:
+        print(f"[rf2na] Failed to load model: {e}")
+        return
+
+    def emit_one(pdb_path: Path, cid: str, file_stem: str) -> None:
+        out_path = output_dir_p / f"{file_stem}.pt"
+        if out_path.exists():
+            return
+        
+        try:
+            coords, seq = _load_coords_for_nucleic(str(pdb_path), cid)
+            if not seq or len(coords) == 0:
+                return  # skip empty chains
+            
+            batch_converter = model.get_batch_converter()
+            coords_tensor, confidence, _, _, padding_mask = batch_converter(
+                [(coords, seq, None)], device=device_obj
+            )
+            
+            encoder_out = model.encoder.forward(
+                coords_tensor, padding_mask, confidence, return_all_hiddens=False
+            )
+            # encoder_out shape: (B, L+2, d_msa_full+d_state, 1)
+            rep = encoder_out["encoder_out"][0][1:-1, :, 0]  # (L, d)
+            
+            ref_len = (
+                _reference_seq_len_for_protein_single_stem(output_dir_p, file_stem)
+                or _get_reference_length(output_dir_p, pdb_path, cid)
+                or rep.shape[0]
+            )
+            take = min(rep.shape[0], ref_len)
+            rep = rep[:take]
+            
+            payload = {
+                "token_embeddings": rep.detach().cpu(),
+                "sequence_embedding": rep.detach().cpu().mean(0),
+                "chain_id": cid,
+            }
+            save_tensor_payload(out_path, payload)
+        except Exception as e:
+            print(f"[rf2na] Skipping {pdb_path.name} chain {cid} -> {file_stem}: {e}")
+
+    with torch.no_grad():
+        # rf2na: iterate over all chains in each PDB file
+        nucleic_residues = {'DA', 'DC', 'DG', 'DT', 'A', 'C', 'G', 'U', 'T'}
+        for pdb_path in pdb_files:
+            from Bio.PDB import MMCIFParser, PDBParser
+            parser = (
+                MMCIFParser(QUIET=True)
+                if pdb_path.suffix.lower() == ".cif"
+                else PDBParser(QUIET=True)
+            )
+            structure = parser.get_structure(pdb_path.stem, str(pdb_path))
+            all_chains = sorted(set(chain.id for s_model in structure for chain in s_model))
+            for cid in all_chains:
+                # Only process chains that contain nucleic acid residues
+                has_na = False
+                for s_model in structure:
+                    for chain in s_model:
+                        if chain.id == cid:
+                            for residue in chain:
+                                if residue.get_resname().strip() in nucleic_residues:
+                                    has_na = True
+                                    break
+                        if has_na:
+                            break
+                    if has_na:
+                        break
+                if not has_na:
+                    continue
+                emit_one(pdb_path, cid, f"{pdb_path.stem}_rna_{cid}")
+
+
+def _load_coords_for_nucleic(pdb_path: str, chain_id: str):
+    from Bio.PDB import PDBParser, MMCIFParser
+    path = Path(pdb_path)
+    
+    if path.suffix.lower() == ".cif":
+        parser = MMCIFParser()
+    else:
+        parser = PDBParser(QUIET=True)
+    
+    structure = parser.get_structure("struct", pdb_path)
+    model = structure[0]
+    
+    coords = []
+    seq = []
+    nucleic_residues = {'DA', 'DC', 'DG', 'DT', 'A', 'C', 'G', 'T', 'U'}
+    # Map PDB 3-letter NA codes to single letters
+    _na3_to_1 = {'DA': 'A', 'DC': 'C', 'DG': 'G', 'DT': 'T', 'A': 'A', 'C': 'C', 'G': 'G', 'T': 'T', 'U': 'U'}
+    
+    for chain in model:
+        if chain.id == chain_id:
+            for residue in chain:
+                resname = residue.get_resname().strip()
+                if resname in nucleic_residues:
+                    seq.append(_na3_to_1.get(resname, resname[0]))
+                    pos_dict = {}
+                    for atom in residue:
+                        pos_dict[atom.name] = atom.get_coord()
+                    
+                    position = np.zeros((3,))
+                    atom_order = ['P', 'O5\'', 'C5\'', 'C4\'', 'C3\'', 'O3\'', 'C2\'', 'C1\'']
+                    for atom_name in atom_order:
+                        if atom_name in pos_dict:
+                            position = pos_dict[atom_name]
+                            break
+                    coords.append(position)
+    
+    return coords, "".join(seq)
 
 
 def write_run_metadata(output_dir: str, metadata: Dict[str, str]) -> None:

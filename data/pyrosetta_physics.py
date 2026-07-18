@@ -1,6 +1,6 @@
 """
 PyRosetta PIA targets: Rosetta ``fa_*`` score terms are mapped onto **FoldX-aligned**
-``PIA_PHYSICS_NAMES`` (``Electro``, ``Energy_SolvP``, ``Energy_SolvH``, ``Energy_VdW``).
+``PIA_PHYSICS_NAMES`` (``Electro``, ``Energy_SolvP``, ``Energy_SolvH``, ``Energy_VdW``, ``Energy_Hbond``).
 
 The bridge is approximate (Rosetta solvation is not split into FoldX polar / hydrophobic).
 
@@ -65,7 +65,7 @@ def _get_scorefxn(name: str):
     return _SCOREFXN
 
 
-_ROSETTA_SCORE_KEYS = ("fa_elec", "fa_sol", "fa_atr", "fa_rep")
+_ROSETTA_SCORE_KEYS = ("fa_elec", "fa_sol", "fa_atr", "fa_rep", "fa_hbond")
 
 
 def _score_type_enum(name: str):
@@ -94,16 +94,18 @@ def extract_rosetta_score_terms(pose, sfxn) -> Dict[str, float]:
 
 
 def rosetta_terms_to_foldx_pia_labels(raw: Dict[str, float]) -> Dict[str, float]:
-    """Map Rosetta decomposition into the same four keys used for FoldX PIA heads."""
+    """Map Rosetta decomposition into FoldX-aligned PIA head keys."""
     fe = float(raw.get("fa_elec", 0.0))
     fs = float(raw.get("fa_sol", 0.0))
     fa = float(raw.get("fa_atr", 0.0))
     fr = float(raw.get("fa_rep", 0.0))
+    fh = float(raw.get("fa_hbond", 0.0))
     return {
         "Electro": fe,
         "Energy_SolvP": 0.5 * fs,
         "Energy_SolvH": 0.5 * fs,
         "Energy_VdW": fa + fr,
+        "Energy_Hbond": fh,
     }
 
 
@@ -182,7 +184,7 @@ def warn_zero_pia_targets_when_no_pyrosetta() -> None:
         return
     _warned_non_pyrosetta_pia = True
     warnings.warn(
-        "StructureDataset: use_pyrosetta_physics=False but PIA heads expect four energy terms "
+        "StructureDataset: use_pyrosetta_physics=False but PIA heads expect FoldX-aligned energy terms "
         f"{tuple(PIA_PHYSICS_NAMES)}. physics_targets are zeros. "
         "Set physics_targets_csv to a precomputed CSV (e.g. FoldX), use_pyrosetta_physics=True, "
         "or set physics_aux_max_weight to 0.",

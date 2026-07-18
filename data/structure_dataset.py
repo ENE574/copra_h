@@ -1,13 +1,15 @@
 from data.complex import ComplexInput
 from data.register import DataRegister
+from data.entity_types import (
+    entity_pair_summary,
+    entity_pair_to_legacy_entity_type,
+    resolve_entity_pair_from_args,
+)
 from torch.utils.data import Dataset
 import pandas as pd
 from esm.data import Alphabet as ESMAlphabet
 import torch
 from utils.torch_compat import torch_load_compat
-from tqdm import tqdm
-from rinalmo.data.constants import *
-from rinalmo.data.alphabet import Alphabet
 from tqdm import tqdm
 import os
 import math
@@ -18,17 +20,163 @@ from easydict import EasyDict
 from data.protein.residue_constants import restype_order, restype_num
 from data.rna.base_constants import RNA_NUCLEOTIDES
 
-na_alphabet_config = {
-    "standard_tkns": RNA_TOKENS,
-    "special_tkns": [CLS_TKN, PAD_TKN, EOS_TKN, UNK_TKN, MASK_TKN],
-}
-
 R = DataRegister()
+
+
+def build_na_alphabet_config():
+    """Backward-compatible RNA alphabet config for online extraction modules."""
+    from rinalmo.data.constants import (
+        CLS_TKN,
+        EOS_TKN,
+        MASK_TKN,
+        PAD_TKN,
+        RNA_TOKENS,
+        UNK_TKN,
+    )
+    return {
+        "standard_tkns": RNA_TOKENS,
+        "special_tkns": [CLS_TKN, PAD_TKN, EOS_TKN, UNK_TKN, MASK_TKN],
+    }
+
+
 # ATOM_N, ATOM_CA, ATOM_C, ATOM_O, ATOM_CB = 0, 1, 2, 3, 4
 # ATOM_P, ATOM_C4, ATOM_NB = 37, 38, 
 
-def _process_structure(structure_path, structure_id, valid_prot_chains=None, valid_rna_chains=None, gpu=None) -> Optional[Dict]:
-    cplx = ComplexInput.from_path(structure_path, valid_prot_chains=valid_prot_chains, valid_rna_chains=valid_rna_chains)
+def _parse_chain_seq_entries(field) -> list:
+    """Parse 'A:SEQ,B:SEQ' into [('A', 'SEQ'), ...] preserving order."""
+    entries = []
+    if field is None or (isinstance(field, float) and pd.isna(field)):
+        return entries
+    for part in str(field).split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        chain, seq = part.split(":", 1)
+        entries.append((chain.strip(), seq.strip()))
+    return entries
+
+
+def _chain_seq_dict(entries) -> dict:
+    return {chain: seq for chain, seq in entries}
+
+
+def _mutation_sites_from_csv(wt_seq: str, mut_seq: str) -> list:
+    sites = []
+    for i in range(min(len(wt_seq), len(mut_seq))):
+        if wt_seq[i] != mut_seq[i]:
+            sites.append((i, mut_seq[i]))
+    return sites
+
+
+def _map_csv_seq_to_struct(csv_seq: str, struct_seq: str) -> dict:
+    """Map indices in csv_seq to indices in struct_seq via sequence alignment."""
+    import difflib
+
+    mapping = {}
+    matcher = difflib.SequenceMatcher(None, csv_seq, struct_seq, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                mapping[i1 + k] = j1 + k
+        elif tag == "replace":
+            block_len = min(i2 - i1, j2 - j1)
+            for k in range(block_len):
+                mapping[i1 + k] = j1 + k
+    return mapping
+
+
+def _aa_to_restype_idx(aa: str, is_rna: bool = False) -> int:
+    if is_rna:
+        if aa in RNA_NUCLEOTIDES:
+            return RNA_NUCLEOTIDES.index(aa) + 21
+        return len(RNA_NUCLEOTIDES) + 21
+    return restype_order.get(aa, restype_num)
+
+
+def _apply_chain_mutations(
+    struct_seq: str,
+    wt_csv: str,
+    mut_csv: str,
+    base_offset: int,
+    mut_restype: torch.Tensor,
+    is_rna: bool,
+) -> str:
+    wt_csv = wt_csv or struct_seq
+    mut_csv = mut_csv or wt_csv
+    wt_to_struct = _map_csv_seq_to_struct(wt_csv, struct_seq)
+    mut_chars = list(struct_seq)
+    for csv_idx, mut_aa in _mutation_sites_from_csv(wt_csv, mut_csv):
+        struct_idx = wt_to_struct.get(csv_idx)
+        if struct_idx is None:
+            continue
+        mut_chars[struct_idx] = mut_aa
+        mut_restype[base_offset + struct_idx] = _aa_to_restype_idx(mut_aa, is_rna=is_rna)
+    return "".join(mut_chars)
+
+
+def _build_mut_restype_and_seqs(cplx, prot_chains, na_chains, row, entity_type, col_prot, col_na, col_mut):
+    mut_entries = _chain_seq_dict(_parse_chain_seq_entries(row[col_mut]))
+    wt_prot_entries = _chain_seq_dict(_parse_chain_seq_entries(row[col_prot]))
+    wt_na_entries = _chain_seq_dict(_parse_chain_seq_entries(row[col_na])) if col_na in row else {}
+
+    mut_restype = cplx["restype"].clone()
+    mut_seqs = []
+    struct_seqs = list(cplx["prot_seqs"]) + list(cplx["rna_seqs"])
+    chain_ids = prot_chains + na_chains
+    offset = 0
+
+    for chain_idx, (chain_id, struct_seq) in enumerate(zip(chain_ids, struct_seqs)):
+        is_prot_chain = chain_idx < len(prot_chains)
+        mut_csv = mut_entries.get(chain_id)
+        if is_prot_chain:
+            wt_csv = wt_prot_entries.get(chain_id, struct_seq)
+            if mut_csv is None:
+                mut_csv = wt_csv
+            mut_seq = _apply_chain_mutations(
+                struct_seq, wt_csv, mut_csv, offset, mut_restype, is_rna=False
+            )
+            mut_seqs.append(mut_seq)
+        elif entity_type == "ppi":
+            wt_csv = wt_prot_entries.get(chain_id, struct_seq)
+            if mut_csv is None:
+                mut_csv = wt_csv
+            _apply_chain_mutations(struct_seq, wt_csv, mut_csv, offset, mut_restype, is_rna=False)
+        else:
+            wt_csv = wt_na_entries.get(chain_id, struct_seq)
+            if mut_csv is None:
+                mut_csv = wt_na_entries.get(chain_id, struct_seq)
+            _apply_chain_mutations(struct_seq, wt_csv, mut_csv, offset, mut_restype, is_rna=True)
+        offset += len(struct_seq)
+
+    return mut_restype, mut_seqs
+
+
+def _filter_chains_in_pdb(pdb_path: str, chain_ids: list) -> list:
+    """Keep chain ids that are present as protein chains in the PDB."""
+    if not chain_ids:
+        return []
+    from data.protein.proteins import ProteinInput
+
+    parsed = ProteinInput.from_path(pdb_path, return_dict=True, valid_chains=chain_ids)
+    return [c for c in chain_ids if c in parsed]
+
+
+def _process_structure(
+    structure_path,
+    structure_id,
+    valid_prot_chains=None,
+    valid_rna_chains=None,
+    valid_partner_chains=None,
+    entity_type="prot_na",
+    gpu=None,
+) -> Optional[Dict]:
+    cplx = ComplexInput.from_path(
+        structure_path,
+        valid_prot_chains=valid_prot_chains,
+        valid_rna_chains=valid_rna_chains,
+        valid_partner_chains=valid_partner_chains,
+        entity_type=entity_type,
+    )
     if cplx is None:
         print(f'[INFO] Failed to parse structure. Too few valid residues: {structure_path}')
         return None
@@ -64,9 +212,11 @@ class StructureDataset(Dataset):
                  col_prot_name='PDB',
                  col_prot_chain='Protein chains',
                  col_na_chain='RNA chains',
+                 col_partner_chain='Protein chains B',
                  col_prot='Protein sequences',
                  col_na='RNA sequences',
                  col_label='△G(kcal/mol)',
+                 entity_type='prot_na',
                  diskcache=None,
                  transform=None,
                  mut=False,
@@ -78,7 +228,7 @@ class StructureDataset(Dataset):
                  str_prot_models: Optional[list] = None,
                  str_rna_models: Optional[list] = None,
                  protein_embedding_model: str = "esm2",
-                 rna_embedding_model: str = "rinalmo",
+                 rna_embedding_model: str = "rna_fm",
                  embedding_strict: bool = True,
                  use_pyrosetta_physics: bool = False,
                  pyrosetta_scorefxn: str = "ref2015",
@@ -91,13 +241,24 @@ class StructureDataset(Dataset):
         self.col_prot_name = col_prot_name
         self.col_prot_chain = col_prot_chain
         self.col_na_chain = col_na_chain
+        self.col_partner_chain = col_partner_chain
         self.col_label = col_label
         self.col_prot = col_prot
         self.col_na = col_na
+        self.entity_b_type = str(kwargs.get("entity_b_type", "rna"))
+        self.mutation_task = str(kwargs.get("mutation_task", "none"))
+        self.entity_type = str(entity_type)
+        self.entity_pair = resolve_entity_pair_from_args(self)
+        if entity_type == "prot_na" and self.entity_pair.interaction == "prot_dna":
+            self.entity_type = "prot_na"
+        elif self.entity_pair.interaction == "ppi":
+            self.entity_type = "ppi"
+        else:
+            self.entity_type = entity_pair_to_legacy_entity_type(self.entity_pair)
+        self._entity_pair_meta = entity_pair_summary(self.entity_pair)
         self.type = 'reg'
         self.diskcache = diskcache
         self.prot_alphabet = ESMAlphabet.from_architecture("ESM-1b")
-        self.na_alphabet = Alphabet(**na_alphabet_config)
         self.mut = mut
         self.col_mut = col_mut
         def _ensure_list(value, fallback):
@@ -113,8 +274,8 @@ class StructureDataset(Dataset):
         self.rna_embedding_model = rna_embedding_model
         self.seq_prot_models = _ensure_list(seq_prot_models, [protein_embedding_model])
         self.seq_rna_models = _ensure_list(seq_rna_models, [rna_embedding_model])
-        self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1", "protrek", "protbert"])
-        self.str_rna_models = _ensure_list(str_rna_models, ["rna_ernie", "rnabert", "rhofold"])
+        self.str_prot_models = _ensure_list(str_prot_models, ["esm_if1"])
+        self.str_rna_models = _ensure_list(str_rna_models, ["rhofold"])
         self.embedding_strict = embedding_strict
         self.use_pyrosetta_physics = bool(use_pyrosetta_physics)
         self.pyrosetta_scorefxn = str(pyrosetta_scorefxn)
@@ -165,35 +326,47 @@ class StructureDataset(Dataset):
             if self.mut:
                 structure_id += '_' + row['MUTATION']
             if self.diskcache is None or structure_id not in self.diskcache:
-                prot_chains = [c.strip() for c in row[self.col_prot_chain].split(',')]
-                na_chains = [c.strip() for c in row[self.col_na_chain].split(',')]
+                prot_chains = [c.strip() for c in str(row[self.col_prot_chain]).split(',') if c.strip()]
+                if self.entity_type == 'ppi':
+                    na_chains = [c.strip() for c in str(row[self.col_partner_chain]).split(',') if c.strip()]
+                    partner_chains = na_chains
+                    rna_chains = []
+                else:
+                    partner_chains = []
+                    rna_chains = [c.strip() for c in str(row[self.col_na_chain]).split(',') if c.strip()]
+                    na_chains = rna_chains
                 pdb_path = self._resolve_pdb_path(structure_id)
 
                 label = float(row[self.col_label])
-                
-                cplx = _process_structure(pdb_path, structure_id, prot_chains, na_chains)
+
+                prot_chains = _filter_chains_in_pdb(pdb_path, prot_chains)
+                if self.entity_type == "ppi":
+                    partner_chains = _filter_chains_in_pdb(pdb_path, partner_chains)
+                    na_chains = partner_chains
+
+                cplx = _process_structure(
+                    pdb_path,
+                    structure_id,
+                    prot_chains,
+                    rna_chains,
+                    valid_partner_chains=partner_chains,
+                    entity_type=self.entity_type,
+                )
+                if cplx is None:
+                    print(f"[WARN] Skip {structure_id}: no valid chains in {pdb_path}")
+                    continue
 
                 if self.mut:
-                    prot_mut = row[self.col_mut]
-                    mut_list = prot_mut.split(',')
-                    mut_list_to_type = []
-                    for mut_seq in mut_list:
-                        mut_seq = mut_seq[2:]
-                        for res in mut_seq:
-                            restype_idx = restype_order.get(res, restype_num)
-                            mut_list_to_type.append(restype_idx)
-                    na = row[self.col_na]
-                    na_list = na.split(',')
-                    for na_seq in na_list:
-                        na_seq = na_seq[2:]
-                        for na in na_seq:
-                            if na in RNA_NUCLEOTIDES:
-                                na_idx = RNA_NUCLEOTIDES.index(na) + 21
-                            else:
-                                na_idx = len(RNA_NUCLEOTIDES) + 21
-                            mut_list_to_type.append(na_idx)
-                    mut_seqs = [i[2:] for i in mut_list]
-                    mut_restype = torch.tensor(mut_list_to_type, device=cplx['restype'].device)
+                    mut_restype, mut_seqs = _build_mut_restype_and_seqs(
+                        cplx,
+                        prot_chains,
+                        na_chains,
+                        row,
+                        self.entity_type,
+                        self.col_prot,
+                        self.col_na,
+                        self.col_mut,
+                    )
                     mut_identifier = mut_restype != cplx['restype']
                     assert len(mut_restype) == len(cplx['restype'])
                     if (mut_restype != cplx['restype']).sum().item() != 1:
@@ -239,9 +412,11 @@ class StructureDataset(Dataset):
                 for na_seq in cplx.rna_seqs:
                     if len(na_seq) > max_na_length:
                         max_na_length = len(na_seq)
+                complex_group = complex.split('.mut.')[0]  # strip .mut.* suffix for within-PDB grouping
                 if self.mut:
                     item = {
                         'complex': complex,
+                        'complex_group': complex_group,
                         'labels': label,
                         'atom_min_dist': atom_min_dist, # needs 2D padding
                         'max_prot_length': max_prot_length,
@@ -254,6 +429,7 @@ class StructureDataset(Dataset):
                 else:
                     item = {
                         'complex': complex,
+                        'complex_group': complex_group,
                         'labels': label,
                         'atom_min_dist': atom_min_dist, # needs 2D padding
                         'max_prot_length': max_prot_length,
@@ -262,6 +438,7 @@ class StructureDataset(Dataset):
                     }
                 item['prot_chain_ids'] = prot_chains
                 item['rna_chain_ids'] = na_chains
+                item['entity_pair'] = dict(self._entity_pair_meta)
                 if self.use_precomputed_embeddings:
                     item['use_precomputed_embeddings'] = True
                     item['embedding_root'] = str(self.embedding_root)
@@ -284,16 +461,30 @@ class StructureDataset(Dataset):
             else:
                 data = self.diskcache[structure_id]
                 data['complex'] = complex
+                data['complex_group'] = complex.split('.mut.')[0]
                 # diskcache may contain old entries without these keys; reconstruct from csv row
                 try:
-                    data["prot_chain_ids"] = row[self.col_prot_chain].split(',')
-                    data["rna_chain_ids"] = row[self.col_na_chain].split(',')
+                    pdb_path = self._resolve_pdb_path(structure_id)
+                    prot_ids = [c.strip() for c in str(row[self.col_prot_chain]).split(',') if c.strip()]
+                    data["prot_chain_ids"] = _filter_chains_in_pdb(pdb_path, prot_ids)
+                    if self.entity_type == 'ppi':
+                        partner_ids = [
+                            c.strip() for c in str(row[self.col_partner_chain]).split(',') if c.strip()
+                        ]
+                        data["rna_chain_ids"] = _filter_chains_in_pdb(pdb_path, partner_ids)
+                    else:
+                        data["rna_chain_ids"] = [
+                            c.strip() for c in str(row[self.col_na_chain]).split(',') if c.strip()
+                        ]
                 except Exception:
                     # keep backward compatibility if columns are missing
                     if "prot_chain_ids" not in data:
                         data["prot_chain_ids"] = []
                     if "rna_chain_ids" not in data:
                         data["rna_chain_ids"] = []
+                # diskcache may hold old entries without entity_pair; reconstruct from dataset metadata
+                if "entity_pair" not in data:
+                    data["entity_pair"] = dict(self._entity_pair_meta)
                 # Always refresh label from the current CSV row (diskcache may hold old dtypes).
                 data["labels"] = float(row[self.col_label])
                 if self._csv_physics_by_id is not None:
@@ -330,9 +521,11 @@ class StructureDataset(Dataset):
             data = self.transform(data)
         return data
 
-EXCLUDE_KEYS = ['labels', 'complex']
+EXCLUDE_KEYS = ['labels', 'complex', 'complex_group']
 DEFAULT_PAD_VALUES = {
     'restype': 26,
+    'mut_restype': 26,
+    'mut_identifier': 0,
     'mask_atoms': 0,
     'chain_nb': -1,
 }
@@ -423,9 +616,39 @@ class CustomStructCollate(object):
             data_list_padded.append(data_padded)
         return data_list_padded
 
+    def _na_encoding_mode(self):
+        if self.dataset_args is None:
+            return "rinalmo"
+        if getattr(self.dataset_args, "entity_type", "") == "ppi":
+            return "protein"
+        if getattr(self.dataset_args, "use_offline_embeddings", False):
+            return "length"
+        return "rinalmo"
+
+    def _get_na_alphabet(self, prot_alphabet):
+        mode = self._na_encoding_mode()
+        if mode == "protein":
+            return prot_alphabet, mode
+        if mode == "length":
+            return None, mode
+        from rinalmo.data.alphabet import Alphabet
+        from rinalmo.data.constants import (
+            CLS_TKN,
+            EOS_TKN,
+            MASK_TKN,
+            PAD_TKN,
+            RNA_TOKENS,
+            UNK_TKN,
+        )
+        na_alphabet_config = {
+            "standard_tkns": RNA_TOKENS,
+            "special_tkns": [CLS_TKN, PAD_TKN, EOS_TKN, UNK_TKN, MASK_TKN],
+        }
+        return Alphabet(**na_alphabet_config), mode
+
     def pad_for_berts(self, strategy, batch):
         prot_alphabet = ESMAlphabet.from_architecture("ESM-1b")
-        na_alphabet = Alphabet(**na_alphabet_config)
+        na_alphabet, na_mode = self._get_na_alphabet(prot_alphabet)
         mut_flag = 0
         prot_chains = [len(item['prot_seqs']) for item in batch]
         na_chains = [len(item['rna_seqs']) for item in batch]
@@ -433,9 +656,9 @@ class CustomStructCollate(object):
         if use_precomputed:
             emb_root = Path(batch[0].get("embedding_root", "outputs/feature_extraction"))
             seq_prot_models = list(batch[0].get("seq_prot_models", ["esm2"]))
-            seq_rna_models = list(batch[0].get("seq_rna_models", ["rinalmo"]))
-            str_prot_models = list(batch[0].get("str_prot_models", ["esm_if1", "protrek", "protbert"]))
-            str_rna_models = list(batch[0].get("str_rna_models", ["rna_ernie", "rnabert", "rhofold"]))
+            seq_rna_models = list(batch[0].get("seq_rna_models", ["rna_fm"]))
+            str_prot_models = list(batch[0].get("str_prot_models", ["esm_if1"]))
+            str_rna_models = list(batch[0].get("str_rna_models", ["rhofold"]))
             strict = bool(batch[0].get("embedding_strict", True))
             seq_prot_embeds = {name: [] for name in seq_prot_models}
             seq_rna_embeds = {name: [] for name in seq_rna_models}
@@ -476,7 +699,12 @@ class CustomStructCollate(object):
             mut_batch = torch.empty([total_prot_chains, max_prot_length])
             mut_batch.fill_(prot_alphabet.padding_idx)
         na_batch = torch.empty([total_na_chains, max_na_length])
-        na_batch.fill_(na_alphabet.pad_idx)
+        if na_mode == "length":
+            na_batch.zero_()
+        elif na_mode == "protein":
+            na_batch.fill_(prot_alphabet.padding_idx)
+        else:
+            na_batch.fill_(na_alphabet.pad_idx)
         curr_prot_idx = 0
         curr_na_idx = 0
         for item in batch:
@@ -512,12 +740,20 @@ class CustomStructCollate(object):
                             str_prot_embeds[model_name].append(emb)
                 curr_prot_idx += 1
             for j, na_seq in enumerate(na_seqs):
-                # na_batch[curr_na_idx, 0] = na_alphabet.cls_idx
-                # NA encoder adds CLS and EOS by default
-                na_seq_encode = na_alphabet.encode(na_seq)
-                seq = torch.tensor(na_seq_encode, dtype=torch.int64)
-                na_batch[curr_na_idx, :len(seq)] = seq
-                # na_batch[curr_na_idx, len(na_seq_encode)+1] = na_alphabet.eos_idx
+                if na_mode == "length":
+                    seq_len = min(len(na_seq), max(0, max_na_length - 2))
+                    if seq_len > 0:
+                        na_batch[curr_na_idx, 1:1 + seq_len] = 1
+                elif na_mode == "protein":
+                    na_batch[curr_na_idx, 0] = prot_alphabet.cls_idx
+                    na_seq_encode = prot_alphabet.encode(na_seq)
+                    seq = torch.tensor(na_seq_encode, dtype=torch.int64)
+                    na_batch[curr_na_idx, 1: len(na_seq_encode) + 1] = seq
+                    na_batch[curr_na_idx, len(na_seq_encode) + 1] = prot_alphabet.eos_idx
+                else:
+                    na_seq_encode = na_alphabet.encode(na_seq)
+                    seq = torch.tensor(na_seq_encode, dtype=torch.int64)
+                    na_batch[curr_na_idx, :len(seq)] = seq
                 if use_precomputed:
                     chain_id = rna_chain_ids[j] if j < len(rna_chain_ids) else 'X'
                     name = safe_name(f"{complex_id}_rna_{chain_id or 'X'}")
@@ -533,7 +769,20 @@ class CustomStructCollate(object):
         prot_mask = torch.zeros_like(prot_batch)
         na_mask = torch.zeros_like(na_batch)
         prot_mask[(prot_batch!=prot_alphabet.padding_idx) & (prot_batch!=prot_alphabet.eos_idx) & (prot_batch!=prot_alphabet.cls_idx)] = 1
-        na_mask[(na_batch!=na_alphabet.pad_idx) & (na_batch!=na_alphabet.eos_idx) & (na_batch!=na_alphabet.cls_idx)] = 1
+        if na_mode == "length":
+            na_mask[(na_batch > 0)] = 1
+        elif na_mode == "protein":
+            na_mask[
+                (na_batch != prot_alphabet.padding_idx)
+                & (na_batch != prot_alphabet.eos_idx)
+                & (na_batch != prot_alphabet.cls_idx)
+            ] = 1
+        else:
+            na_mask[
+                (na_batch != na_alphabet.pad_idx)
+                & (na_batch != na_alphabet.eos_idx)
+                & (na_batch != na_alphabet.cls_idx)
+            ] = 1
         if use_precomputed:
             seq_prot_batch = {name: torch.stack(seq_prot_embeds[name], dim=0) for name in seq_prot_models}
             seq_rna_batch = {name: torch.stack(seq_rna_embeds[name], dim=0) for name in seq_rna_models}
@@ -639,7 +888,7 @@ class CustomStructCollate(object):
         else:
             batch["labels"] = torch.as_tensor(labs, dtype=torch.float32).reshape(-1)
 
-        # Optional: attach offline embeddings (12 models, 4 groups) to the batch so the model
+        # Optional: attach offline embeddings (4 models, 4 groups) to the batch so the model
         # can bypass online ESM/RiNALMo forward.
         use_offline = False
         offline_root = None
@@ -650,65 +899,56 @@ class CustomStructCollate(object):
         if use_offline:
             if offline_root is None:
                 raise ValueError("use_offline_embeddings=True but dataset_args.offline_embedding_root is not set")
-            from utils.offline_embeddings import OfflineEmbeddingSpec, load_offline_token_embeddings
+            from utils.offline_embeddings import OfflineEmbeddingSpec, stack_offline_embeddings_for_batch
 
-            spec = OfflineEmbeddingSpec(root=offline_root)
+            def _model_tuple(key, default):
+                val = getattr(self.dataset_args, key, None) if self.dataset_args is not None else None
+                if val is None:
+                    return default
+                if isinstance(val, str):
+                    return () if val == "none" else (val,)
+                items = [x for x in list(val) if str(x) != "none"]
+                return tuple(items) if items else default
+
+            mut_subdir = getattr(self.dataset_args, "offline_mutant_subdir", "mutant")
+            if mut_subdir in (None, "", "none", "None"):
+                mut_subdir = None
+
+            na_seq_group = getattr(self.dataset_args, "offline_na_sequence_group", "rna_sequence")
+            na_str_group = getattr(self.dataset_args, "offline_na_structure_group", "rna_structure")
+            partner_use_prot = bool(getattr(self.dataset_args, "offline_partner_use_protein_embeddings", False))
+            na_wt_on_mut = bool(getattr(self.dataset_args, "offline_na_wt_on_mut", True))
+            spec = OfflineEmbeddingSpec(
+                root=offline_root,
+                mutant_subdir=mut_subdir,
+                protein_sequence_models=_model_tuple("seq_prot_models", ("esm2",)),
+                protein_structure_models=_model_tuple("str_prot_models", ("esm_if1",)),
+                rna_sequence_models=_model_tuple("seq_rna_models", ("rna_fm",)),
+                rna_structure_models=_model_tuple("str_rna_models", ("rhofold",)),
+                dna_sequence_models=_model_tuple("seq_dna_models", ()),
+                dna_structure_models=_model_tuple("str_dna_models", ()),
+                na_sequence_group=str(na_seq_group),
+                na_structure_group=str(na_str_group),
+                partner_use_protein_embeddings=partner_use_prot,
+                na_wt_on_mut=na_wt_on_mut,
+            )
             max_prot_len = int(prot_batch.shape[1])
             max_rna_len = int(na_batch.shape[1])
+            is_mut_batch = "mut_seqs" in data_list[0]
 
-            def _pad_into_token_space(x_residue, max_len):
-                # current token space: [CLS] + residues + [EOS] + pad
-                # offline token_embeddings are residue-level [L, D]
-                L = int(x_residue.shape[0])
-                out = x_residue.new_zeros((max_len, int(x_residue.shape[1])))
-                end = min(L, max_len - 2)
-                if end > 0:
-                    out[1:1 + end] = x_residue[:end]
-                return out
-
-            offline = {
-                "prot_seq": {m: [] for m in spec.protein_sequence_models},
-                "prot_struct": {m: [] for m in spec.protein_structure_models},
-                "rna_seq": {m: [] for m in spec.rna_sequence_models},
-                "rna_struct": {m: [] for m in spec.rna_structure_models},
-            }
-
-            # Important: keep the same iteration order as pad_for_berts (item -> chains)
-            for item in data_list:
-                # Prefer structure id (e.g. PDB_MUTATION for mut datasets) so offline .pt names match extract_features.
-                pdb_id = str(item.get("id", item.get("complex", "")))
-                prot_chain_ids = item.get("prot_chain_ids", [])
-                rna_chain_ids = item.get("rna_chain_ids", [])
-
-                for chain_id in prot_chain_ids:
-                    for m in spec.protein_sequence_models:
-                        p = spec.file_path("protein_sequence", m, pdb_id, "prot", chain_id)
-                        offline["prot_seq"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_prot_len))
-                    for m in spec.protein_structure_models:
-                        p = spec.file_path("protein_structure", m, pdb_id, "prot", chain_id)
-                        offline["prot_struct"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_prot_len))
-
-                for chain_id in rna_chain_ids:
-                    for m in spec.rna_sequence_models:
-                        p = spec.file_path("rna_sequence", m, pdb_id, "rna", chain_id)
-                        offline["rna_seq"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_rna_len))
-                    for m in spec.rna_structure_models:
-                        p = spec.file_path("rna_structure", m, pdb_id, "rna", chain_id)
-                        offline["rna_struct"][m].append(_pad_into_token_space(load_offline_token_embeddings(p), max_rna_len))
-
-            # Stack into [total_chains, T, D] tensors
-            for group in offline:
-                for m in offline[group]:
-                    if len(offline[group][m]) == 0:
-                        raise RuntimeError(
-                            "Offline embedding list is empty for group='{}' model='{}'. "
-                            "Likely missing prot_chain_ids/rna_chain_ids in cached samples, or wrong offline_embedding_root."
-                            .format(group, m)
-                        )
-                    offline[group][m] = torch.stack(offline[group][m], dim=0)
+            if is_mut_batch:
+                batch["offline_embeddings"] = stack_offline_embeddings_for_batch(
+                    spec, data_list, max_prot_len, max_rna_len, variant="wt"
+                )
+                batch["offline_embeddings_mut"] = stack_offline_embeddings_for_batch(
+                    spec, data_list, max_prot_len, max_rna_len, variant="mut"
+                )
+            else:
+                batch["offline_embeddings"] = stack_offline_embeddings_for_batch(
+                    spec, data_list, max_prot_len, max_rna_len, variant="wt"
+                )
 
             batch["use_offline_embeddings"] = True
-            batch["offline_embeddings"] = offline
 
         return batch
     

@@ -1,15 +1,16 @@
 epochs: 50
 patience: 50
-output_dir: '/media/SSD0/csd/lrg/outputs/mCSM'
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/mCSM'
 gpus:
-  - 0
-ckpts: 
-  # - /media/SSD0/csd/lrg/outputs/PRA310/test_2026-05-14-03-18-31/log_fold_0/checkpoint/best-epoch=14-val_loss=2.197.ckpt
-  #  - /media/SSD0/csd/lrg/outputs/PRA310/test_2026-05-14-02-38-25/log_fold_1/checkpoint/best-epoch=6-val_loss=1.300.ckpt
-  # - /media/SSD0/csd/lrg/outputs/PRA310/test_2026-05-14-06-39-49/log_fold_2/checkpoint/best-epoch=4-val_loss=1.456.ckpt
-  # - /media/SSD0/csd/lrg/outputs/PRA310/test_2026-05-14-03-59-03/log_fold_3/checkpoint/best-epoch=12-val_loss=2.010.ckpt
-  # - /media/SSD0/csd/lrg/outputs/PRA310/test_2026-05-14-03-18-31/log_fold_4/checkpoint/best-epoch=10-val_loss=1.866.ckpt
+  - 4
+
+# Set after mCSM crossvalidation training (num_folds: 1 → one path).
+# Example:
+# ckpt: /media/SSD0/csd/lrg/copra_h/outputs/mCSM_cv/mcsm_cv_2026-01-01-12-00-00/log_fold_0/checkpoint/best-epoch=10-val_loss=1.234.ckpt
+ckpt: null
+ckpts: null
+
 run_name: 'test1_best_'
-wandb: False
+wandb: false
 num_folds: 1
 accumulate_grad_batches: 4

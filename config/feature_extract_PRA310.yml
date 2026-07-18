@@ -17,11 +17,11 @@ protein_sequence:
       repr_layer:
       batch_size: 1
     prott5:
-      enabled: true
+      enabled: false
       model_dir: weights/ProtT5_weights
       batch_size: 1
     saprot:
-      enabled: true
+      enabled: false
       model_dir: weights/SaProt_weights
       batch_size: 1
 
@@ -33,7 +33,7 @@ protein_structure:
       model_location: /workspace/copra_h/weights/esm-if1_weights/esm_if1_gvp4_t16_142M_UR50.pt
       chain_id:
     protbert:
-      enabled: true
+      enabled: false
       model_dir: weights/ProtBert_weights
       batch_size: 1
     alphafold2:
@@ -46,7 +46,7 @@ protein_structure:
       max_template_date: "2020-05-14"
       use_gpu_relax: false
     protrek:
-      enabled: true
+      enabled: false
       model_dir: /workspace/copra_h/weights/ProTrek_weights
       from_checkpoint: /workspace/copra_h/weights/ProTrek_weights/ProTrek_650M.pt
       protein_config: /workspace/copra_h/weights/ProTrek_weights/esm2_t33_650M_UR50D
@@ -60,7 +60,7 @@ rna_sequence:
   fasta:
   models:
     rinalmo:
-      enabled: true
+      enabled: false
       model_weights: weights/rinalmo_weights/rinalmo_giga_pretrained.pt
       rinalmo_type: "650M"
       batch_size: 1
@@ -70,7 +70,7 @@ rna_sequence:
       repr_layer:
       batch_size: 1
     rna_msm:
-      enabled: true
+      enabled: false
       root_path: .
       msa_path: RNA-MSM/results
       msa_list:
@@ -81,14 +81,14 @@ rna_structure:
   fasta:
   models:
     rna_ernie:
-      enabled: true
+      enabled: false
       model_dir: weights/RNAErnie_weights
       vocab_path: RNAErnie/data/vocab/vocab_1MER.txt
       batch_size: 16
       max_seq_len: 512
       device: gpu
     rnabert:
-      enabled: true
+      enabled: false
       model_weights: weights/RNABERT_weights/bert_mul_2.pth
       batch_size: 40
     rhofold:

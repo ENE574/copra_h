@@ -201,7 +201,7 @@ class ModelModule(pl.LightningModule):
         else:
             raise NotImplementedError('Scheduler not supported: %s' % self.scheduler_cfg.type)
 
-        if self.model_args.resume is not None:
+        if getattr(self.model_args, 'resume', None) is not None:
             print("Resuming from checkloint: %s" % self.model_args.resume)
             ckpt = torch_load_compat(self.model_args.resume, map_location=self.model_args.device)
             it_first = ckpt['iteration']
@@ -243,7 +243,23 @@ class ModelModule(pl.LightningModule):
         #         print(name)
         #         print("Found Unused Parameters")
 
+    @staticmethod
+    def _unwrap_multitask_batch(batch):
+        """Extract the actual task batch from CombinedLoader dict format.
+        
+        Lightning 2.0 CombinedLoader (max_size_cycle mode) yields dicts like
+        {task_name: batch_dict}.  Extract the first non-empty task batch.
+        """
+        if not isinstance(batch, dict):
+            return batch
+        # Check if this looks like a CombinedLoader dict (values are dicts with 'labels')
+        for task_name, task_batch in batch.items():
+            if isinstance(task_batch, dict) and 'labels' in task_batch:
+                return task_batch
+        return batch
+
     def training_step(self, batch, batch_idx):
+        batch = self._unwrap_multitask_batch(batch)
         y = batch['labels']
         if self.standardize_label and self.label_stats_from_data and (not self._label_stats_logged):
             self.log("train/label_mean", float(self.label_mean), batch_size=self.batch_size, on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)

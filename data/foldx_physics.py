@@ -7,10 +7,11 @@ FoldX-derived PIA targets: keys are exactly ``PIA_PHYSICS_NAMES`` (FoldX ``Stabi
    - ``Energy_SolvP`` (6)
    - ``Energy_SolvH`` (7)
    - ``Energy_VdW`` (4)
+   - ``Energy_Hbond`` (BackHbond + SideHbond, indices 2 + 3)
 
    (``Energy_vdwclash`` / ``backbone_vdwclash`` are separate FoldX terms; not used as PIA heads here.)
 
-2. **Older tabular** ``Average*.fxout`` with a header row — mapped into the same four names.
+2. **Older tabular** ``Average*.fxout`` with a header row — mapped into the same five names.
 """
 from __future__ import annotations
 
@@ -82,16 +83,19 @@ def _try_parse_foldx5_stability_st_line(line: str) -> Optional[Dict[str, float]]
     if ".pdb" not in pdb_field:
         return None
     try:
-        for i in (1, 4, 5, 6, 7):
+        for i in (1, 2, 3, 4, 5, 6, 7):
             float(parts[i])
     except (ValueError, IndexError):
         return None
 
+    back_hbond = float(parts[2])
+    side_hbond = float(parts[3])
     return {
         "Electro": float(parts[5]),
         "Energy_SolvP": float(parts[6]),
         "Energy_SolvH": float(parts[7]),
         "Energy_VdW": float(parts[4]),
+        "Energy_Hbond": back_hbond + side_hbond,
     }
 
 
@@ -99,7 +103,7 @@ def foldx_terms_to_pia_targets(terms: Mapping[str, float]) -> Dict[str, float]:
     """
     Map FoldX / legacy table keys -> ``PIA_PHYSICS_NAMES`` (kcal/mol as in FoldX).
     """
-    # Already FoldX Stability four-field dict (from ``*_ST.fxout``).
+    # Already FoldX Stability dict (from ``*_ST.fxout`` or precomputed CSV).
     if all(k in terms for k in PIA_PHYSICS_NAMES):
         return {k: float(terms[k]) for k in PIA_PHYSICS_NAMES}
 
@@ -120,6 +124,11 @@ def foldx_terms_to_pia_targets(terms: Mapping[str, float]) -> Dict[str, float]:
         "vanderwaalsclashes",
         "van_der_waals_clash",
     )
+    back_hbond = get("backhbond", "back_hbond", "backbone_hbond")
+    side_hbond = get("sidehbond", "side_hbond", "sidechain_hbond")
+    hbond = get("energy_hbond", "hbond", "hydrogen_bond")
+    if hbond == 0.0 and (back_hbond != 0.0 or side_hbond != 0.0):
+        hbond = back_hbond + side_hbond
 
     if sol_p == 0.0 and sol_h == 0.0:
         sol_combined = get("solvation", "energy_solvation")
@@ -132,6 +141,7 @@ def foldx_terms_to_pia_targets(terms: Mapping[str, float]) -> Dict[str, float]:
         "Energy_SolvP": sol_p,
         "Energy_SolvH": sol_h,
         "Energy_VdW": vdw + clash,
+        "Energy_Hbond": hbond,
     }
 
 
@@ -233,6 +243,7 @@ def load_physics_targets_csv(path: str | Path) -> Dict[str, Dict[str, Any]]:
                         "Energy_VdW": torch.tensor(
                             float(row["fa_atr"]) + float(row["fa_rep"]), dtype=torch.float32
                         ),
+                        "Energy_Hbond": torch.tensor(float(row.get("fa_hbond", 0.0)), dtype=torch.float32),
                     }
                 else:
                     continue
@@ -260,3 +271,164 @@ def compute_physics_target_stats_from_csv(path: str | Path) -> tuple[dict[str, f
         mu[k] = float(vals.mean().item())
         std[k] = float(vals.std(unbiased=False).clamp_min(1e-6).item())
     return mu, std
+
+
+# ---------------------------------------------------------------------------
+# DNA-specific physics energy terms (protein–DNA complexes)
+#   DNA_Electro  – approximate Coulomb between charged protein residues
+#                  and DNA backbone phosphates
+#   DNA_Stacking – geometric measure of DNA base stacking (parallel face
+#                  distance of consecutive bases)
+#   DNA_VDW      – approximate Lennard-Jones between protein and DNA atoms
+# ---------------------------------------------------------------------------
+
+def _is_dna_residue(resname: str) -> bool:
+    """Check if a PDB residue name is a DNA nucleotide."""
+    return resname.strip().upper() in {"DA", "DC", "DG", "DT", "A", "C", "G", "T"}
+
+
+def _is_protein_residue(resname: str) -> bool:
+    """Check if a PDB residue name is a standard amino acid."""
+    standard = {
+        "ALA", "ARG", "ASN", "ASP", "CYS", "GLU", "GLN", "GLY", "HIS",
+        "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
+        "TYR", "VAL",
+    }
+    return resname.strip().upper() in standard
+
+
+def compute_dna_physics_terms(pdb_path: str) -> dict[str, float]:
+    """
+    Compute three DNA-specific potential energy terms from a protein–DNA PDB file.
+
+    Returns
+    -------
+    dict
+        Keys: ``DNA_Electro``, ``DNA_Stacking``, ``DNA_VDW`` (kcal/mol scale).
+    """
+    from Bio.PDB import PDBParser
+    import numpy as np
+
+    parser = PDBParser(QUIET=True)
+    structure = parser.get_structure("complex", pdb_path)
+
+    # Collect protein and DNA atom positions and charges
+    protein_atoms = []  # (pos, charge)
+    dna_atoms = []      # (pos, charge, resname, resid, chain)
+    dna_residues = []   # (chain, resid, base_center, base_normal)
+
+    # Approximate partial charges (in e)
+    CHARGE_MAP = {
+        "LYS": {"NZ": +1.0},
+        "ARG": {"NH1": +0.5, "NH2": +0.5, "NE": +0.5, "CZ": 0.0},
+        "ASP": {"OD1": -0.5, "OD2": -0.5, "CG": 0.0},
+        "GLU": {"OE1": -0.5, "OE2": -0.5, "CD": 0.0},
+        "HIS": {"ND1": +0.25, "NE2": +0.25},
+    }
+    # DNA phosphate oxygen partial charge
+    PHOS_CHARGE = -0.5
+
+    for model in structure:
+        for chain in model:
+            chain_id = chain.get_id()
+            for residue in chain:
+                resname = residue.get_resname().strip().upper()
+                res_id = residue.get_id()[1]
+
+                if _is_protein_residue(resname):
+                    chg_map = CHARGE_MAP.get(resname, {})
+                    for atom in residue:
+                        aname = atom.get_name().strip()
+                        if aname in chg_map:
+                            q = chg_map[aname]
+                            protein_atoms.append((atom.get_vector().get_array().copy(), q))
+                elif _is_dna_residue(resname):
+                    # Collect all heavy atoms for VDW
+                    base_center = np.zeros(3)
+                    base_atom_count = 0
+                    for atom in residue:
+                        aname = atom.get_name().strip()
+                        pos = atom.get_vector().get_array().copy()
+                        q = 0.0
+                        # Phosphate oxygens carry negative charge
+                        if aname in {"OP1", "OP2"}:
+                            q = PHOS_CHARGE
+                        dna_atoms.append((pos, q, resname, res_id, chain_id))
+                        # Base atoms for stacking geometry: ring atoms (N and C)
+                        if aname and aname[0] in "NC":
+                            base_center += pos
+                            base_atom_count += 1
+                    if base_atom_count > 0:
+                        base_center /= base_atom_count
+                        dna_residues.append((chain_id, res_id, base_center))
+
+    if len(dna_atoms) == 0 or len(protein_atoms) == 0:
+        return {"DNA_Electro": 0.0, "DNA_Stacking": 0.0, "DNA_VDW": 0.0}
+
+    prot_pos = np.array([p[0] for p in protein_atoms])
+    prot_chg = np.array([p[1] for p in protein_atoms])
+    dna_pos = np.array([d[0] for d in dna_atoms])
+    dna_chg = np.array([d[1] for d in dna_atoms])
+    # All DNA atoms for VDW
+    dna_pos_all = dna_pos.copy()
+
+    # ---- DNA_Electro: Coulomb between charged protein residues and DNA phosphates ----
+    # Only consider DNA atoms with non-zero charge (OP1, OP2)
+    dna_charged_mask = np.abs(dna_chg) > 1e-6
+    if dna_charged_mask.sum() > 0 and len(protein_atoms) > 0:
+        dna_charged_pos = dna_pos[dna_charged_mask]
+        dna_charged = dna_chg[dna_charged_mask]
+        electro = 0.0
+        for i in range(len(protein_atoms)):
+            q1 = prot_chg[i]
+            if abs(q1) < 1e-6:
+                continue
+            dists = np.linalg.norm(dna_charged_pos - prot_pos[i], axis=1)
+            mask = (dists > 0.5) & (dists < 12.0)
+            if mask.any():
+                electro += float((q1 * dna_charged[mask] / dists[mask]).sum())
+        # Convert to kcal/mol-like scale (Coulomb constant ~332, divided by dielectric ~80)
+        dna_electro = electro * 332.0 / 80.0
+    else:
+        dna_electro = 0.0
+
+    # ---- DNA_Stacking: average base-base face distance on same chain ----
+    stacking_terms = []
+    # Group residues by chain and sort by residue ID
+    from collections import defaultdict
+    chain_residues = defaultdict(list)
+    for ch, rid, center in dna_residues:
+        chain_residues[ch].append((rid, center))
+    for ch in chain_residues:
+        residues = sorted(chain_residues[ch], key=lambda x: x[0])
+        for i in range(len(residues) - 1):
+            r1 = residues[i][1]
+            r2 = residues[i + 1][1]
+            d = np.linalg.norm(r1 - r2)
+            if 2.0 < d < 6.0:
+                # Shorter distance = better stacking = more negative energy
+                stacking_terms.append(-1.0 / max(d, 2.5))
+    dna_stacking = float(np.mean(stacking_terms)) if stacking_terms else 0.0
+
+    # ---- DNA_VDW: Lennard-Jones between protein heavy atoms and DNA heavy atoms ----
+    vdw_cutoff = 8.0
+    vdw_eps = 0.1  # kcal/mol
+    vdw_sigma = 3.5  # Angstrom
+    vdw = 0.0
+    pair_count = 0
+    for i in range(min(len(prot_pos), 2000)):  # cap to avoid O(N^2)
+        dists = np.linalg.norm(dna_pos_all - prot_pos[i], axis=1)
+        mask = (dists > 1.0) & (dists < vdw_cutoff)
+        if mask.any():
+            for d in dists[mask]:
+                sr6 = (vdw_sigma / d) ** 6
+                vdw_term = 4.0 * vdw_eps * (sr6 * sr6 - sr6)
+                vdw += vdw_term
+                pair_count += 1
+    dna_vdw = vdw / max(pair_count, 1) * 10.0  # scale up to meaningful magnitude
+
+    return {
+        "DNA_Electro": dna_electro,
+        "DNA_Stacking": dna_stacking,
+        "DNA_VDW": dna_vdw,
+    }

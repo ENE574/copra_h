@@ -10,9 +10,9 @@
 # (PRA201 complexes are a subset). Point elsewhere only if you maintain a PRA201-only cache.
 
 dataset_type: 'structure_dataset'
-df_path: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA201.csv'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA201.csv'
 batch_size: 8
-data_root: '/media/SSD0/csd/lrg/datasets/PRA310/PDBs'
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/PDBs'
 num_workers: 0
 col_prot_chain: 'Protein chains'
 col_na_chain: 'RNA chains'
@@ -20,14 +20,14 @@ col_prot: 'Protein sequences'
 col_na: 'RNA sequences'
 col_label: '△G(kcal/mol)'
 pin_memory: True
-cache_dir: '/media/SSD0/csd/lrg/cache/pra201_foldx_csv'
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/pra201_foldx_csv'
 loss_type: regression
 strategy: separate
 
 use_offline_embeddings: true
-offline_embedding_root: '/media/SSD0/csd/lrg/outputs/feature_extraction_PRA310'
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PRA310'
 
-physics_targets_csv: '/media/SSD0/csd/lrg/datasets/PRA310/splits/PRA201_foldx_pia_terms.csv'
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/PRA310/splits/PRA201_foldx_pia_terms.csv'
 
 transform:
   - type: select_atom

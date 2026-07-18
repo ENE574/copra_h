@@ -1,35 +1,20 @@
 resume: null
 model:
   model_type: copra
-  esm_type: 650M
-  embedding_root: /media/SSD0/csd/lrg/outputs/feature_extraction_PRA310
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PRA310
   seq_prot_models:
     - esm2
-    - prott5
-    - saprot
   seq_rna_models:
-    - rinalmo
-    - rna_msm
     - rna_fm
   str_prot_models:
     - esm_if1
-    - protrek
-    - protbert
   str_rna_models:
-    - rna_ernie
-    - rnabert
     - rhofold
   pooling: token
   output_dim: 1
-  fix_lms: true
-  use_offline_embeddings: true
   offline_dim: 1280
-  lora_tune: false
-  lora_rank: 16
-  lora_alpha: 32
   pair_dim: 40
   dist_dim: 40
-  representation_layer: 33
   coformer:
     embed_dim: 320
     pair_dim: 40
@@ -59,6 +44,7 @@ train:
     - Energy_SolvP
     - Energy_SolvH
     - Energy_VdW
+    - Energy_Hbond
   physics_aux_standardize: true
   physics_aux_clip: 0.0
   physics_aux_stop_grad: true

@@ -9,7 +9,7 @@ import torch
 from torch.utils.data._utils.collate import default_collate
 
 from data.register import DataRegister
-from data.structure_dataset import CustomStructCollate, StructureDataset, na_alphabet_config, safe_name
+from data.structure_dataset import CustomStructCollate, StructureDataset, build_na_alphabet_config, safe_name
 from feature_extraction import extractors
 
 R = DataRegister()
@@ -710,7 +710,7 @@ class CustomStructCollateOnlineMem(CustomStructCollate):
         from rinalmo.data.alphabet import Alphabet
 
         prot_alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
-        na_alphabet = Alphabet(**na_alphabet_config)
+        na_alphabet = Alphabet(**build_na_alphabet_config())
         mut_flag = 0
         prot_chains = [len(item['prot_seqs']) for item in batch]
         na_chains = [len(item['rna_seqs']) for item in batch]

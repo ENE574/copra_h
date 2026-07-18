@@ -1,8 +1,8 @@
 epochs: 30
 patience: 150
-output_dir: '/media/SSD0/csd/lrg/outputs/ablation'
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA310'
 gpus:
-  - 0
+  - 7
 
 ckpt: null
 

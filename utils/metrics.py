@@ -62,27 +62,26 @@ class ScalarMetricAccumulator(object):
 
 
 def per_complex_corr(df, pred_attr='y_pred', true_attr='y_true', limit=10):
+    """按复合物计算 pearson/spearman/rmse/mae，丢弃少于 limit 个数据点的复合物。"""
     corr_table = []
-    for cplx in df['complex'].unique():
-        df_cplx = df.query(f'complex == "{cplx}"')
-        if len(df_cplx) <= 2:
+    group_col = 'complex_group' if 'complex_group' in df.columns else 'complex'
+    for cplx in df[group_col].unique():
+        df_cplx = df.query(f'{group_col} == "{cplx}"')
+        if len(df_cplx) < limit:
             continue
-        # if len(df_cplx) < limit:
-        #     continue
         y_pred = np.array(df_cplx[pred_attr])
         y_true = np.array(df_cplx[true_attr])
-        # print("HIIII!", cal_pearson(y_pred, y_true))
-        # print("Pred_and True:", y_pred, y_true)
         corr_table.append({
             'complex': cplx,
-            'pearson': abs(cal_pearson(y_pred, y_true)),
-            'spearman': abs(cal_spearman(y_pred, y_true)),
+            'pearson': cal_pearson(y_pred, y_true),
+            'spearman': cal_spearman(y_pred, y_true),
             'rmse': cal_rmse(y_pred, y_true),
             'mae': cal_mae(y_pred, y_true)
         })
-    # print("Corr_tabel:", corr_table)
     corr_table = pd.DataFrame(corr_table)
-    corr_table.fillna(0)
+    if corr_table.empty:
+        return 0.0, 0.0, 0.0, 0.0
+    corr_table = corr_table.fillna(0)
     avg = corr_table[['pearson', 'spearman', 'rmse', 'mae']].mean()
     return avg['pearson'], avg['spearman'], avg['rmse'], avg['mae']
 
@@ -103,6 +102,16 @@ def per_complex_acc(df, pred_attr='y_pred', true_attr='y_true', limit=10):
             'recall': cal_recall(y_pred, y_true)
         })
     acc_table = pd.DataFrame(acc_table)
+    if acc_table.empty:
+        if len(df) <= 1:
+            return 0.0, 0.0, 0.0
+        y_pred = np.array(df[pred_attr])
+        y_true = np.array(df[true_attr])
+        return (
+            cal_accuracy(y_pred, y_true),
+            cal_precision(y_pred, y_true),
+            cal_recall(y_pred, y_true),
+        )
     # avg = acc_table[['accuracy', 'auc', 'precision', 'recall']].mean()
     # return avg['accuracy'], avg['auc'], avg['precision'], avg['recall']
     avg = acc_table[['accuracy', 'precision', 'recall']].mean()
@@ -166,21 +175,34 @@ def cal_weighted_loss(pred_dict, y, mask, loss_types, loss_weights):
         
 
 def cal_pearson(pred, gt):
-    # print("Pearson Cal:", np.unique(pred.shape), np.unique(gt.shape))
-    if np.isnan(stats.pearsonr(pred, gt).statistic):
-        print("Pearson Cal:", pred, gt)
-    return stats.pearsonr(pred, gt).statistic
+    pred = np.asarray(pred).ravel()
+    gt = np.asarray(gt).ravel()
+    if len(pred) < 2:
+        return 0.0
+    r = stats.pearsonr(pred, gt).statistic
+    return 0.0 if np.isnan(r) else r
 
 def cal_spearman(pred, gt):
-    if np.isnan(stats.spearmanr(pred, gt).statistic):
-        print("SPearman Cal:", pred, gt)
-    return stats.spearmanr(pred, gt).statistic
+    pred = np.asarray(pred).ravel()
+    gt = np.asarray(gt).ravel()
+    if len(pred) < 2:
+        return 0.0
+    r = stats.spearmanr(pred, gt).statistic
+    return 0.0 if np.isnan(r) else r
 
 def cal_rmse(pred, gt):
+    pred = np.asarray(pred).ravel()
+    gt = np.asarray(gt).ravel()
+    if len(pred) == 0:
+        return 0.0
     return math.sqrt(mean_squared_error(pred, gt))
 
 def cal_mae(pred, gt):
-    return np.abs(pred-gt).sum() / len(pred)
+    pred = np.asarray(pred).ravel()
+    gt = np.asarray(gt).ravel()
+    if len(pred) == 0:
+        return 0.0
+    return np.abs(pred - gt).sum() / len(pred)
 
 def cal_accuracy(pred, gt, thres=0.5):
     logits = 1 / (1+np.exp(-pred))
@@ -207,6 +229,24 @@ def cal_recall(pred, gt, thres=0.5):
     true_positives = (binary == 1) & (gt == 1)
     actual_positives = (gt == 1)
     return np.sum(true_positives) / np.sum(actual_positives) if np.sum(actual_positives) > 0 else 0
+
+
+def global_auroc(df, pred_attr='y_pred', true_attr='y_true'):
+    """全局 AUROC：将所有样本按 ∆∆G 符号二值化后直接计算。
+    
+    Mutations are classified based on the sign of ∆∆G:
+      ∆∆G > 0 → destabilizing (1),  ∆∆G < 0 → stabilizing (0).
+    AUROC is computed globally across all samples (not per-complex).
+    """
+    y_pred = np.asarray(df[pred_attr]).ravel()
+    y_true = np.asarray(df[true_attr]).ravel()
+    y_true_bin = (y_true > 0).astype(np.int32)
+    if len(np.unique(y_true_bin)) < 2:
+        return 0.0
+    try:
+        return float(roc_auc_score(y_true_bin, y_pred))
+    except Exception:
+        return 0.0
     
     
     

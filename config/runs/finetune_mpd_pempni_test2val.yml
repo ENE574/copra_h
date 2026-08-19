@@ -1,0 +1,22 @@
+# MPD PEMPNI with MPD48 as val (fold_pempni → test remapped to val).
+# Monitor val/all_pearson, skip test (val is the original test set).
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_test2val'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mpd_pempni_test2val_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

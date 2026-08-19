@@ -1,0 +1,19 @@
+# DDG Fine-tuning on MPD - all data as train
+epochs: 150
+patience: 100
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_ddg_mpd_all_train'
+gpus:
+  - 0
+
+ckpt: null
+
+run_name: 'finetune_ddg_mpd_all_train_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 16
+checkpoint_monitor: train/all_rmse
+checkpoint_mode: min
+early_stop_monitor: train/all_rmse
+early_stop_mode: min
+skip_test: true

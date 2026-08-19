@@ -1,0 +1,17 @@
+# fold_4 优化方案3 - GPU6
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_fold4_opt3'
+gpus: [6]
+ckpt: null
+skip_test: true
+run_name: 'skempi_fold4_opt3_'
+wandb: false
+num_folds: 5
+fold_indices: [4]
+accumulate_grad_batches: 4
+checkpoint_monitor: 'train/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'train/all_rmse'
+early_stop_mode: 'min'

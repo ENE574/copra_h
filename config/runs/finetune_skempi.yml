@@ -1,0 +1,13 @@
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_cv'
+gpus:
+  - 5
+
+ckpt: null
+
+run_name: 'skempi_cv_'
+wandb: false
+num_folds: 5
+
+accumulate_grad_batches: 4

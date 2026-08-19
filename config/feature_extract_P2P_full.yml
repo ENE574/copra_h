@@ -1,0 +1,40 @@
+# Feature extraction for P2P full training set (V2020 + wt + mt).
+# Uses the dataset (build_dataset_fastas) path so WT and mutant (MT) sequences
+# are both emitted; WT embeddings already exist and will be reused/skipped,
+# mutant embeddings are newly generated as {pdb}_{MUTATION}_prot_{chain}.pt.
+device: "cuda"
+output_dir: "/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_P2P"
+
+dataset:
+  csv_path: "/media/SSD0/csd/lrg/copra_h/datasets/P2P/splits/P2P_full_train.csv"
+  pdb_dir: "/media/SSD0/csd/lrg/copra_h/datasets/P2P/PDBs"
+  id_col: "PDB"
+  mutation_col: "MUTATION"
+  protein_seq_col: "Protein sequences"
+  partner_seq_col: "Protein sequences B"
+  protein_chain_col: "Protein chains"
+  partner_chain_col: "Protein chains B"
+
+protein_sequence:
+  models:
+    esm2:
+      enabled: true
+      model_location: "/media/SSD0/csd/lrg/copra_h/weights/esm-2_weights/esm2_t33_650M_UR50D.pt"
+      repr_layer: 33
+      batch_size: 1
+
+protein_structure:
+  models:
+    esm_if1:
+      enabled: true
+      model_location: "/media/SSD0/csd/lrg/copra_h/weights/esm-if1_weights/esm_if1_gvp4_t16_142M_UR50.pt"
+      chain_id: null
+
+rna_sequence:
+  models: {}
+rna_structure:
+  models: {}
+dna_sequence:
+  models: {}
+dna_structure:
+  models: {}

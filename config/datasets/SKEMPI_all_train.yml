@@ -1,0 +1,43 @@
+# SKEMPI dataset - all data as train
+dataset_type: 'structure_dataset'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/SKEMPI/splits/skempi.csv'
+col_group: 'fold_all_train'
+batch_size: 2
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/SKEMPI/PDBs'
+num_workers: 0
+col_prot_name: 'PDB'
+col_prot_chain: 'Protein chains'
+col_partner_chain: 'Protein chains B'
+col_prot: 'Protein sequences'
+col_mut: 'Mutation sequences'
+col_label: 'DDG'
+entity_type: ppi
+mutation_task: ddg_ppi
+mut: true
+pin_memory: true
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/SKEMPI'
+loss_type: regression
+strategy: separate
+
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_SKEMPI'
+offline_mutant_subdir: mutant
+offline_partner_use_protein_embeddings: true
+offline_na_wt_on_mut: false
+seq_prot_models:
+  - esm2
+seq_rna_models:
+  - esm2
+str_prot_models:
+  - esm_if1
+str_rna_models:
+  - esm_if1
+
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/SKEMPI/splits/SKEMPI_foldx_pia_terms.csv'
+
+transform:
+  - type: select_atom
+    resolution: backbone
+  - type: selected_region_with_distmap
+    patch_size: 256
+  - type: subtract_center_of_mass

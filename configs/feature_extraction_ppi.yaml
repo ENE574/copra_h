@@ -1,0 +1,28 @@
+device: "cuda"
+output_dir: "/media/SSD0/csd/lrg/copra_h/dataset/ppi/features"
+
+dataset:
+  csv_path: "/media/SSD0/csd/lrg/copra_h/dataset/ppi/CSVs/ppi_dataset.csv"
+  pdb_dir: "/media/SSD0/csd/lrg/copra_h/dataset/ppi/PDBs"
+  id_col: "PDB"
+  protein_seq_col: "Protein A sequences"
+  partner_seq_col: "Protein B sequences"
+  protein_chain_col: "Protein A chains"
+  partner_chain_col: "Protein B chains"
+
+protein_sequence:
+  fasta: null
+  models:
+    esm2:
+      enabled: true
+      model_dir: "/media/SSD0/csd/lrg/copra_h/weights/ESM2_weights"
+      batch_size: 1
+
+protein_structure:
+  pdb_dir: null
+  fasta: null
+  models:
+    esm_if1:
+      enabled: true
+      model_dir: "/media/SSD0/csd/lrg/copra_h/weights/ESM-IF1_weights"
+      batch_size: 1

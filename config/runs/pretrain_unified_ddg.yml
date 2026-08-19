@@ -1,0 +1,40 @@
+# Unified ddG pre-training run config
+# Multi-task: cycle through SKEMPI (PPI ddG) + mCSM (prot-RNA ddG) + MPD (prot-DNA ddG)
+# entity_b_type is now dynamically resolved per-batch via input["entity_pair"],
+# so DNA/RNA/PPI can coexist in the same training run.
+epochs: 50
+patience: 60
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/unified_ddg_pretrain'
+gpus:
+  - 0
+
+ckpt: null
+run_name: 'unified_ddg_'
+wandb: false
+
+# Single fold for pre-training (use all data, val splits within each dataset)
+num_folds: 1
+
+# Multi-task data sources — cycled by MultiTaskDataModule
+multitask_primary_task: skempi
+multitask_sources:
+  - name: skempi
+    data_config: ./config/datasets/SKEMPI.yml
+    batch_size: 2
+  - name: mcsm
+    data_config: ./config/datasets/mCSM.yml
+    batch_size: 4
+  - name: mpd
+    data_config: ./config/datasets/MPD_pempni.yml
+    batch_size: 1
+
+accumulate_grad_batches: 4
+
+# Monitor all_pearson for early stopping and checkpointing
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+early_stop_monitor: val/all_rmse
+early_stop_mode: min
+
+# Skip full test during pre-training (only validation)
+skip_test: true

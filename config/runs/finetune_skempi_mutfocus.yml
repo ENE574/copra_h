@@ -1,0 +1,23 @@
+# SKEMPI 5-fold LOCOV: align with 06-14 best (GNN no-wt, accum=4) + val/all ckpt + early stop.
+epochs: 30
+patience: 50
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_localdiff_cv'
+gpus:
+  - 7
+
+ckpt: null
+
+run_name: 'skempi_localdiff_'
+wandb: false
+num_folds: 5
+
+accumulate_grad_batches: 4
+
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+checkpoint_monitor_all: val/pc_pearson
+checkpoint_mode_all: max
+checkpoint_select: primary
+test_both_checkpoints: true
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

@@ -1,0 +1,64 @@
+# Model config reconstructed from training hparams.yaml of
+# PRA201_B101_pia_F2_piafix (log_fold_0/lightning_logs/version_0/hparams.yaml)
+# Used for 5-fold inference/validation on PRA201 (protein-RNA dG).
+model:
+  model_type: copra
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PRA310
+  stage: dG
+  pooling: token
+  offline_dim: 1280
+  pair_dim: 40
+  dist_dim: 40
+  output_dim: 1
+  seq_prot_models:
+    - esm2
+  seq_rna_models:
+    - rna_fm
+  str_prot_models:
+    - esm_if1
+  str_rna_models:
+    - rhofold
+  coformer:
+    embed_dim: 320
+    pair_dim: 40
+    num_blocks: 6
+    num_heads: 20
+    use_rot_emb: true
+    attn_qkv_bias: false
+    attention_dropout: 0.1
+    transition_dropout: 0.0
+    residual_dropout: 0.1
+    transition_factor: 4
+    use_flash_attn: false
+    attention_type: standard
+  ddg_output_calibrate: true
+  mutation_diff_mode: local
+  mutation_local_window: 32
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: true
+
+# Required by ModelModule.__init__ (reads train.optimizer / train.scheduler);
+# test stage does not train, but the constructor accesses these fields.
+train:
+  max_grad_norm: 100.0
+  seed: 2024
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: mse
+  optimizer:
+    type: adam
+    lr: 3.0e-05
+    beta1: 0.9
+    beta2: 0.999
+    weight_decay: 1.0e-06
+  scheduler:
+    type: multistep
+    milestones: [125, 250, 375]
+    gamma: 0.5
+    min_lr: 1.0e-07
+    mode: min
+    monitor: train_loss

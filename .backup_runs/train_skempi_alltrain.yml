@@ -1,0 +1,17 @@
+# SKEMPI 全量训练（所有数据作为 train，不做验证）
+# 训练完成后用 test 模式对 5 个 fold 的 val 分别推理
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain'
+gpus: [2]
+ckpt: null
+skip_test: true
+run_name: 'skempi_alltrain_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'train/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'train/all_pearson'
+early_stop_mode: 'max'

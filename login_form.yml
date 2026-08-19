@@ -1,0 +1,210 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - generic [ref=e5]:
+          - img [ref=e7] [cursor=pointer]
+          - menubar [ref=e9]:
+            - menuitem "Home" [ref=e10] [cursor=pointer]
+            - menuitem "Browse" [ref=e11] [cursor=pointer]
+            - menuitem "Search" [ref=e12] [cursor=pointer]
+            - menuitem "Download" [ref=e13] [cursor=pointer]
+            - menuitem "CASF" [ref=e14] [cursor=pointer]
+            - menuitem "Tools " [ref=e15]:
+              - generic [ref=e16] [cursor=pointer]:
+                - text: Tools
+                - generic [ref=e17]: 
+            - menuitem "Support " [ref=e18]:
+              - generic [ref=e19] [cursor=pointer]:
+                - text: Support
+                - generic [ref=e20]: 
+          - generic [ref=e21]: Log inSubscribe
+        - text:  
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24] [cursor=pointer]:
+            - generic [ref=e25]: Important Announcement
+            - generic [ref=e26]: What is PDBbind+?
+            - generic [ref=e27]: What is new in PDBbind version 2025?
+            - generic [ref=e28]: Why to subscribe to PDBbind+?
+            - generic [ref=e29]: User manual for the PDBbind database version 2025 (PDF)
+          - img [ref=e31]
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - generic [ref=e34] [cursor=pointer]:
+              - generic [ref=e35]:
+                - text: Protein-ligand
+                - text: Complex
+              - generic [ref=e36]: 29,001
+            - img [ref=e37] [cursor=pointer]
+          - generic [ref=e38]:
+            - generic [ref=e39] [cursor=pointer]:
+              - generic [ref=e40]:
+                - text: Protein-Protein
+                - text: Complex
+              - generic [ref=e41]: 5,077
+            - img [ref=e42] [cursor=pointer]
+          - generic [ref=e43]:
+            - generic [ref=e44] [cursor=pointer]:
+              - generic [ref=e45]:
+                - text: Protein-nucleic acid
+                - text: Complex
+              - generic [ref=e46]: 1,584
+            - img [ref=e47] [cursor=pointer]
+          - generic [ref=e48]:
+            - generic [ref=e49] [cursor=pointer]:
+              - generic [ref=e50]:
+                - text: Nucleic acid-ligand
+                - text: Complex
+              - generic [ref=e51]: "262"
+            - img [ref=e52] [cursor=pointer]
+      - generic [ref=e54]:
+        - generic [ref=e55]:
+          - button [ref=e56] [cursor=pointer]
+          - button [ref=e58] [cursor=pointer]
+          - generic [ref=e61]:
+            - generic [ref=e62]: Important Annoucement
+            - generic [ref=e63]:
+              - generic [ref=e64]:
+                - list [ref=e65]:
+                  - listitem [ref=e66] [cursor=pointer]: Sales Prices for PDBbind v.2025 in USD and EUR Adjusted (2026/06/12)
+                  - listitem [ref=e67] [cursor=pointer]: The PDBbind Refined Set v.2025 Is Now Available on PDBbind+ (2026/04/22)
+                  - listitem [ref=e68] [cursor=pointer]: Official Release of PDBbind Version 2025 (2026/02/08)
+                  - listitem [ref=e69] [cursor=pointer]: "Reminder: PDBbind version 2025 is up-coming (2026/01/20)"
+                  - listitem [ref=e70] [cursor=pointer]: Download PDBbind v.2020R1 for FREE and enjoy the higher quality of structural files (2025/8/6)
+                  - listitem [ref=e71] [cursor=pointer]: The PDBbind refined set v.2024 is now available on PDBbind+ (2025/3/23)
+                - generic [ref=e72]:
+                  - button "<" [disabled] [ref=e73]
+                  - generic [ref=e74]: 1 / 3
+                  - button ">" [ref=e75] [cursor=pointer]
+              - generic [ref=e77]:
+                - heading "Sales Prices for PDBbind v.2025 in USD and EUR Adjusted (2026/06/12)" [level=2] [ref=e78]
+                - paragraph [ref=e79]:
+                  - paragraph [ref=e80]: Dear PDBbind Users,
+                  - paragraph [ref=e81]: Since the release of PDBbind v.2025 in this February, exchange rates for the Chinese currency (CNY) have experienced significant fluctuations. While the sales price of PDBbind v.2025 in CNY remains unchanged, we have to adjust the prices in USD and EUR to ensure fair pricing for both domestic and international users. The new sales prices for PDBbind v.2025 in USD and EUR are now reflected in all invoices, sales contracts, and relevant pages on this website.
+                  - paragraph [ref=e82]: Should currency exchange rates undergo non-negligible changes in the future, we may again adjust the prices accordingly. We greatly appreciate your understanding in this matter.
+                  - paragraph [ref=e83]: Best regards,
+                  - paragraph [ref=e84]: The PDBbind+ Team
+                  - paragraph [ref=e85]: School of Pharmaceutical Sciences, Fudan University
+                  - paragraph [ref=e86]: "& Shanghai TopScience Co., Ltd."
+          - generic [ref=e88]:
+            - generic [ref=e89]:
+              - generic [ref=e90]: What is PDBbind+?
+              - generic [ref=e91]: PDBbind+ is an enhanced and commercialized version of the original PDBbind-CN website (http://www.pdbbind.org.cn). This upgraded website is a collaborative project between Prof. Renxiao Wang's team at Fudan University and TopScience Co. Ltd in Shanghai (https://www.tsbiochem.com). The PDBbind+ web site is officially launched in January 2024.
+            - generic [ref=e93]:
+              - generic [ref=e94]:
+                - generic [ref=e95]: What does PDBbind+ offer?
+                - generic [ref=e96]: PDBbind+ serves as a web portal to the PDBbind database, which is developed by Prof. Renxiao Wang's team at the School of Pharmacy, Fudan University. The primary objective of the PDBbind database is to offer a comprehensive collection of experimental binding affinity data for all biomolecular complexes recorded in the Protein Data Bank (PDB). This database has been widely employed in various molecular modeling and machine-learning studies related to molecular recognition, drug discovery, and many more.
+              - list [ref=e98]:
+                - listitem [ref=e99]: On this web site, users can visually inspect, analyze, and search through the diverse complexes cataloged in the PDBbind database.
+                - listitem [ref=e100]: Users are granted access to download the PDBbind data sets, which include carefully processed protein-ligand complex structures that are ready for use with computational software.
+                - listitem [ref=e101]: This web site also incorporates valuable functional modules that leverage the contents of PDBbind and the Protein Data Bank. On-line job submission and computation are enabled with the support of cloud computing resources.
+          - generic [ref=e103]:
+            - generic [ref=e104]:
+              - generic [ref=e105]: What is new in PDBbind version 2025?
+              - generic [ref=e106]: "The current version of the PDBbind database on this web site is version 2025. As indicated by the version number, it is based on the contents of PDB available at the beginning of year 2025. This version has the following new features:"
+              - generic [ref=e109]: Measurable Data Growth
+              - generic [ref=e110]: The PDBbind database continues to expand. The total number of binding data entries in version 2025 has reached 35,924. This represents an approximate 7% increase compared to version 2024 and an increase of over 50% compared to the last free-accessible release (version 2020).
+            - img [ref=e112]
+          - generic [ref=e114]:
+            - generic [ref=e115]:
+              - generic [ref=e116]: What is new in PDBbind version 2025?
+              - generic [ref=e119]: Refined Structural Processing & Quality Control
+              - generic [ref=e120]: Each complex included in PDBbind comes with a set of processed structural files. To compile version 2025, we have further upgraded our processing workflow. This upgraded workflow has been applied not only to newly added entries but also to entries from the previous version.
+            - img [ref=e122]
+          - generic [ref=e124]:
+            - generic [ref=e125]:
+              - generic [ref=e126]: What is new in PDBbind version 2025?
+              - generic [ref=e129]: Integration of New On-Line Computing Tool
+              - generic [ref=e130]: In addition to COMET (target-fishing for bioactive molecules) and PLANET (ultra-fast structure-based virtual screening), the PDBbind+ platform has incorporated a new tool termed STELLAR. This deep-learning model is developed for the prediction of ligand dissociation rate constants (koff), a critical feature in protein-ligand binding.
+            - img [ref=e132]
+          - generic [ref=e134]:
+            - generic [ref=e135]: Why to subscribe to PDBbind+?
+            - generic [ref=e136]: "We have taken a significant step towards the commercialization of the PDBbind database starting from version 2021. The PDBbind+ web site serves as the exclusive gateway to both the current and forthcoming releases of the PDBbind database. Full access to the PDBbind database and the valuable features integrated into the PDBbind+ web site is reserved for paid subscribers. Nevertheless, it is FREE to register on the PDBbind+ web site. Upon completion of registration, the user is automatically designated as a demo user, providing him/her with limited access to the available features on PDBbind+. The distinctions between the benefits of a demo user and those of a paid subscriber are outlined below:"
+            - table [ref=e138]:
+              - rowgroup [ref=e139]:
+                - row "Feature Demo user Subscriber" [ref=e140]:
+                  - columnheader "Feature" [ref=e141]
+                  - columnheader "Demo user" [ref=e142]
+                  - columnheader "Subscriber" [ref=e143]
+              - rowgroup [ref=e144]:
+                - row "Access to the BROWSE page Yes Yes" [ref=e145]:
+                  - cell "Access to the BROWSE page" [ref=e146]
+                  - cell "Yes" [ref=e147]
+                  - cell "Yes" [ref=e148]
+                - row "Search within the PDBbind data sets on the SEARCH page version 2020 The subscribed version" [ref=e149]:
+                  - cell "Search within the PDBbind data sets on the SEARCH page" [ref=e150]
+                  - cell "version 2020" [ref=e151]
+                  - cell "The subscribed version" [ref=e152]
+                - row "Download the PDBbind data sets on the DOWNLOAD page version 2020 The subscribed version" [ref=e153]:
+                  - cell "Download the PDBbind data sets on the DOWNLOAD page" [ref=e154]
+                  - cell "version 2020" [ref=e155]
+                  - cell "The subscribed version" [ref=e156]
+                - row "Access to the extra functional modules (e.g. COMET for target fishing) Limited (10 trials each) Unlimited" [ref=e157]:
+                  - cell "Access to the extra functional modules (e.g. COMET for target fishing)" [ref=e158]
+                  - cell "Limited (10 trials each)" [ref=e159]
+                  - cell "Unlimited" [ref=e160]
+                - row "Access to the related material (e.g. the CASF benchmark) Yes Yes" [ref=e161]:
+                  - cell "Access to the related material (e.g. the CASF benchmark)" [ref=e162]
+                  - cell "Yes" [ref=e163]
+                  - cell "Yes" [ref=e164]
+            - generic [ref=e165]: Please note that the PDBbind-CN web site remains accessible at http://www.pdbbind.org.cn/. Users can continue to access the contents of the PDBbind database, up to version 2020, free of charge on that platform. The PDBbind-CN web site, however, will not be updated in the future.
+        - list [ref=e166]:
+          - listitem [ref=e167] [cursor=pointer]:
+            - button [ref=e168]
+          - listitem [ref=e169] [cursor=pointer]:
+            - button [ref=e170]
+          - listitem [ref=e171] [cursor=pointer]:
+            - button [ref=e172]
+          - listitem [ref=e173] [cursor=pointer]:
+            - button [ref=e174]
+          - listitem [ref=e175] [cursor=pointer]:
+            - button [ref=e176]
+          - listitem [ref=e177] [cursor=pointer]:
+            - button [ref=e178]
+      - generic [ref=e180]:
+        - generic [ref=e181] [cursor=pointer]:
+          - generic [ref=e182]: NEW
+          - generic [ref=e183]: PDBbind version 2025 is released now
+        - generic [ref=e184] [cursor=pointer]:
+          - generic [ref=e185]: NEW
+          - generic [ref=e186]: PDBbind version 2025 is released now
+    - generic [ref=e189]:
+      - generic [ref=e190]:
+        - text: Copyright @2023-2040 上海陶术生物科技股份有限公司 |
+        - link "License Agreement For Demo Users" [ref=e191] [cursor=pointer]:
+          - /url: /termofuse
+        - text: "|"
+        - link "Privacy Policy" [ref=e192] [cursor=pointer]:
+          - /url: /privacypolicy
+      - generic [ref=e193]:
+        - text: 网站备案号：
+        - link "沪ICP备20019793号-9" [ref=e194] [cursor=pointer]:
+          - /url: https://beian.miit.gov.cn/
+      - generic [ref=e195]: Technical Support (技术支持)：support@pdbbind-plus.org.cn
+  - dialog "Welcome back" [ref=e197]:
+    - generic [ref=e198]:
+      - generic [ref=e199]: Welcome back
+      - button "Close" [ref=e200] [cursor=pointer]:
+        - generic [ref=e201]: 
+    - generic [ref=e202]:
+      - generic [ref=e203]:
+        - generic [ref=e204]:
+          - generic [ref=e206]:
+            - generic [ref=e207]: User E-mail *
+            - generic [ref=e208] [cursor=pointer]: Re-send activation e-mail
+          - textbox [ref=e211]
+        - generic [ref=e212]:
+          - generic [ref=e214]:
+            - generic [ref=e215]: Password *
+            - generic [ref=e216] [cursor=pointer]: Forget Password?
+          - generic [ref=e218]:
+            - textbox "密码" [ref=e219]
+            - button "" [ref=e221] [cursor=pointer]:
+              - generic [ref=e222]: 
+        - button "Log in" [ref=e223] [cursor=pointer]
+        - generic [ref=e224]:
+          - text: Don't have an account yet?
+          - link "Create an account" [ref=e225] [cursor=pointer]:
+            - /url: /register
+      - text: 

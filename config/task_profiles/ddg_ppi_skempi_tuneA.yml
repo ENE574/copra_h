@@ -1,0 +1,34 @@
+# Tune-A: stability — lower lr/wd balance, stronger pred-std + dropout, constrained ckpt for fold1.
+entity_pair:
+  entity_a_type: protein
+  entity_b_type: protein
+  interaction: ppi
+  mutation_task: ddg_ppi
+
+model:
+  mutation_diff_mode: local
+  mutation_local_window: 16
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: false
+  entity_b_use_protein_fusion: true
+  coformer:
+    attention_dropout: 0.12
+    residual_dropout: 0.12
+    transition_dropout: 0.02
+
+train:
+  physics_aux_max_weight: 0.006
+  physics_aux_prob: 0.7
+  ddg_pred_std_floor: 0.35
+  ddg_pred_std_reg_weight: 0.03
+  huber_delta: 1.5
+  interface_aux_weight: 0.05
+  optimizer:
+    lr: 8.e-5
+    weight_decay: 2.e-4
+  scheduler:
+    patience: 6

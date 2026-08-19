@@ -1,0 +1,14 @@
+epochs: 1
+patience: 100
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_ddg_mcsm_pc'
+gpus:
+  - 0
+
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_ddg_mcsm_standard/finetune_ddg_mcsm_standard_2026-07-03-13-00-11/log_fold_0/checkpoint/best-epoch=0-val_loss=0.876.ckpt'
+
+run_name: 'test_ddg_mcsm_pc_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+skip_test: false

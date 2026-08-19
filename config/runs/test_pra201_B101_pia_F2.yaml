@@ -1,0 +1,14 @@
+# Inference/validation run config for PRA201_B101_pia_F2_piafix.
+# 5-fold best checkpoints taken from res.json (selection_metric: val/all_rmse).
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix/pra201_pia_F2_piafix_2026-08-10-15-22-40/test_inference'
+gpus:
+  - 0
+wandb: False
+num_folds: 5
+run_name: 'test_pra201_B101_pia_F2_'
+ckpts:
+  - /media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix/pra201_pia_F2_piafix_2026-08-10-15-22-40/log_fold_0/checkpoint/best-epoch=27-val/all_rmse=1.603.ckpt
+  - /media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix/pra201_pia_F2_piafix_2026-08-10-15-22-40/log_fold_1/checkpoint/best-epoch=92-val/all_rmse=1.077.ckpt
+  - /media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix/pra201_pia_F2_piafix_2026-08-10-15-22-40/log_fold_2/checkpoint/best-epoch=23-val/all_rmse=0.966.ckpt
+  - /media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix/pra201_pia_F2_piafix_2026-08-10-15-22-40/log_fold_3/checkpoint/best-epoch=35-val/all_rmse=1.499.ckpt
+  - /media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix/pra201_pia_F2_piafix_2026-08-10-15-22-40/log_fold_4/checkpoint/best-epoch=36-val/all_rmse=1.341.ckpt

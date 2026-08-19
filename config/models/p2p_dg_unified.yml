@@ -1,0 +1,73 @@
+# P2P dG regression model (unified dG profile, PPI).
+# All rows (V2020 + wt + mt) are treated as WT: the `dG` label is the
+# ABSOLUTE binding free energy in the (mutant or wild-type) state, and the
+# offline embeddings are looked up by PDB id only. No mutation diff is used.
+
+task_profile: dg_unified
+
+model:
+  model_type: copra
+  esm_type: 650M
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_P2P
+  use_offline_embeddings: true
+  offline_dim: 1280
+  fix_lms: true
+  lora_tune: false
+  pooling: token
+  output_dim: 1
+  pair_dim: 40
+  dist_dim: 40
+  representation_layer: 33
+
+  # PPI: protein only (esm2 seq + esm_if1 struct) for BOTH sides.
+  seq_prot_models: [esm2]
+  str_prot_models: [esm_if1]
+  seq_rna_models: []
+  str_rna_models: []
+  seq_dna_models: []
+  str_dna_models: []
+
+  coformer:
+    embed_dim: 320
+    pair_dim: 40
+    num_blocks: 6
+    num_heads: 20
+    use_rot_emb: true
+    attn_qkv_bias: false
+    attention_dropout: 0.1
+    transition_dropout: 0.0
+    residual_dropout: 0.1
+    transition_factor: 4
+    use_flash_attn: false
+    attention_type: standard
+
+train:
+  temperature: 0.2
+  max_iters: 30_000
+  val_freq: 1000
+  seed: 2024
+  max_grad_norm: 100.0
+  main_loss_type: huber
+  huber_delta: 2.0
+  standardize_label: true
+  label_stats_from_data: true
+
+  # Disable physics aux for P2P (FoldX terms not available / not needed for dG)
+  physics_aux_max_weight: 0.0
+  physics_aux_prob: 0.0
+  physics_aux_terms: []
+  physics_aux_standardize: false
+  physics_aux_start_epoch: 1000
+
+  optimizer:
+    type: adam
+    lr: 1.e-4
+    weight_decay: 0.0
+    beta1: 0.9
+    beta2: 0.999
+
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 5
+    min_lr: 1.e-6

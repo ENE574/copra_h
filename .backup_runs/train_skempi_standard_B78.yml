@@ -1,0 +1,16 @@
+# SKEMPI standard_B78 (: B76 recipe, 5-fold CV)
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_standard_B78_'
+gpus: [0]
+ckpt: null
+skip_test: true
+run_name: 'skempi_standard_B78__'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_pearson'
+early_stop_mode: 'max'

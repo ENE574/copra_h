@@ -1,0 +1,21 @@
+# 方案A: MPD PEMPNI test→val, hp tuned (fix_lms, lr5e-5, wd1e-4, physics0.05)
+epochs: 15                            # ← 缩短训练 (30 → 15)
+patience: 150                         # 等价于不 early stop (patience * val_freq ≈ epochs)
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_test2val'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mpd_pempni_test2val_hp_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+test_both_checkpoints: false
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

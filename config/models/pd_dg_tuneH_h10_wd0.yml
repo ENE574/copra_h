@@ -1,0 +1,80 @@
+# PD36 robust fine-tune model: smaller Huber delta + stronger regularization.
+# Goal: reduce test RMSE inflated by a few large-error (outlier) samples.
+task_profile: dg_unified
+
+model:
+  model_type: copra
+  esm_type: 650M
+  use_offline_embeddings: true
+  offline_dim: 1280
+  fix_lms: true
+  lora_tune: false
+  pooling: token
+  output_dim: 1
+  pair_dim: 40
+  dist_dim: 40
+  representation_layer: 33
+
+  seq_prot_models: [esm2]
+  str_prot_models: [esm_if1]
+  seq_rna_models: []
+  str_rna_models: []
+  seq_dna_models: [dnabert2]
+  str_dna_models: [rf2na]
+
+  coformer:
+    embed_dim: 320
+    pair_dim: 40
+    num_blocks: 6
+    num_heads: 20
+    use_rot_emb: true
+    attn_qkv_bias: false
+    attention_dropout: 0.15
+    transition_dropout: 0.1
+    residual_dropout: 0.15
+    transition_factor: 4
+    use_flash_attn: false
+    attention_type: standard
+
+train:
+  temperature: 0.2
+  max_iters: 30_000
+  val_freq: 1000
+  seed: 2024
+  max_grad_norm: 100.0
+  main_loss_type: huber
+  huber_delta: 1.0
+  standardize_label: true
+  label_stats_from_data: true
+
+  physics_aux_terms:
+    - Electro
+    - Energy_SolvP
+    - Energy_SolvH
+    - Energy_VdW
+    - Energy_Hbond
+  physics_aux_standardize: true
+  physics_aux_clip: 0.0
+  physics_aux_stop_grad: true
+  physics_aux_start_epoch: 10
+  physics_aux_prob: 1.0
+  physics_aux_max_weight: 0.005
+  physics_aux_warmup_epochs: 3
+  physics_aux_decay_epochs: 10
+  physics_aux_min_weight: 0.0
+  physics_aux_normalize: false
+
+  optimizer:
+    type: adam
+    lr: 3.e-5
+    weight_decay: 0.0
+    beta1: 0.9
+    beta2: 0.999
+
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 8
+    min_lr: 1.e-6
+    monitor: val/all_pearson
+    mode: max

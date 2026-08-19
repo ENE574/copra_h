@@ -1,0 +1,13 @@
+# SKEMPI alltrain test: 用全量训练 checkpoint 对 5 折 val 推理
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_test'
+gpus: [0]
+ckpt: null
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+run_name: 'skempi_alltrain_test_'
+wandb: false
+num_folds: 5

@@ -1,0 +1,90 @@
+# B14: RMSE reduction — B13 architecture + B12-balanced loss weights + tighter huber
+resume: null
+model:
+  model_type: copra
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_mCSM_RNA
+  seq_prot_models:
+    - esm2
+  seq_rna_models:
+    - rna_fm
+  str_prot_models:
+    - esm_if1
+  str_rna_models:
+    - rhofold
+  pooling: token
+  mutation_diff_mode: local
+  mutation_local_window: 64            # B13: keep 64, wider context helps
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: true
+  output_dim: 1
+  offline_dim: 1280
+  pair_dim: 40
+  dist_dim: 40
+  coformer:
+    embed_dim: 320
+    pair_dim: 40
+    num_blocks: 6
+    num_heads: 20
+    use_rot_emb: true
+    attn_qkv_bias: false
+    attention_dropout: 0.2
+    transition_dropout: 0.0
+    residual_dropout: 0.1
+    transition_factor: 4
+    use_flash_attn: false
+    attention_type: standard
+
+train:
+  temperature: 0.15                   # B13: keep 0.15
+  max_iters: 30_000
+  val_freq: 38
+  seed: 2024
+  max_grad_norm: 100.0
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: huber
+  huber_delta: 0.5                     # B14: 1.0→0.5, considerably tighter; closer to MSE for large errors
+  # === B14: reduce ranking/demeaning back to B12 levels ===
+  ddg_pred_std_floor: 0.3              # B13: keep, prevents initial pred_std=0 collapse
+  ddg_pred_std_reg_weight: 0.2
+  complex_demeaned_loss_weight: 1.5    # B14: 5.0→1.5, less aggressive than B12(2.0)
+  complex_demean_min_group_size: 2
+  ranking_loss_weight: 1.5             # B14: 5.0→1.5, less aggressive than B12(2.0)
+  ranking_loss_margin: 0.5             # B14: 1.0→0.5, back to B12 margin → easier to satisfy
+  accum_window_loss: false
+  # === regularization ===
+  input_noise_scale: 0.02
+  # === physics aux ===
+  physics_aux_terms:
+    - Electro
+    - Energy_SolvP
+    - Energy_SolvH
+    - Energy_VdW
+    - Energy_Hbond
+  physics_aux_standardize: true
+  physics_aux_clip: 0.0
+  physics_aux_stop_grad: true
+  physics_aux_start_epoch: 15
+  physics_aux_prob: 1.0
+  physics_aux_max_weight: 0.005
+  physics_aux_warmup_epochs: 3
+  physics_aux_decay_epochs: 10
+  physics_aux_min_weight: 0.0
+  physics_aux_normalize: false
+  optimizer:
+    type: adam
+    lr: 1.e-5
+    weight_decay: 1.0e-05
+    beta1: 0.9
+    beta2: 0.999
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 10
+    min_lr: 1.e-7
+    monitor: val/pc_pearson
+    mode: max

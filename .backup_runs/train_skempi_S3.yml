@@ -1,0 +1,16 @@
+# SKEMPI-S3: exp衰减 + LR=3e-5 + 200epoch 慢速收敛
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_S3'
+gpus: [3]
+ckpt: null
+skip_test: true
+run_name: 'skempi_S3_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_pearson'
+early_stop_mode: 'max'

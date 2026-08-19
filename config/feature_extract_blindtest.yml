@@ -1,0 +1,43 @@
+# Blindtest-only offline embeddings for mCSM
+device: cuda
+output_dir: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_mCSM_RNA
+
+dataset:
+  csv_path: /media/SSD0/csd/lrg/copra_h/tmp_blindtest_extract.csv
+  pdb_dir: /media/SSD0/csd/lrg/copra_h/datasets/mCSM_RNA/PDBs
+  id_col: PDB
+  mutation_col: MUTATION
+  protein_seq_col: Protein sequences
+  rna_seq_col: RNA sequences
+
+protein_sequence:
+  models:
+    esm2:
+      enabled: true
+      model_location: /media/SSD0/csd/lrg/copra_h/weights/esm-2_weights/esm2_t33_650M_UR50D.pt
+      batch_size: 1
+
+protein_structure:
+  models:
+    esm_if1:
+      enabled: true
+      model_location: /media/SSD0/csd/lrg/copra_h/weights/esm-if1_weights/esm_if1_gvp4_t16_142M_UR50.pt
+      chain_id:
+
+rna_sequence:
+  models:
+    rna_fm:
+      enabled: true
+      model_path: /media/SSD0/csd/lrg/copra_h/weights/RNA-FM_weights/RNA-FM_pretrained.pth
+      batch_size: 1
+
+rna_structure:
+  models:
+    rhofold:
+      enabled: true
+      ckpt_path: /media/SSD0/csd/lrg/copra_h/weights/RhFold_weights/model_20221010_params.pt
+      single_seq_pred: true
+      device: cuda
+      max_rna_length: 1000
+      truncate_rna: true
+      cuda_safe_max_rna_length: 512

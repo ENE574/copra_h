@@ -1,0 +1,36 @@
+# Unified dG pre-training: multi-entity binding affinity prediction.
+# Supports protein-RNA, protein-DNA, and protein-protein interactions.
+# The entity_pair is a template; each dataset config provides its own via entity_b_type / entity_type.
+entity_pair:
+  entity_a_type: protein
+  entity_b_type: rna
+  interaction: prot_na
+  mutation_task: none
+
+train:
+  # Loss: Huber for dG regression
+  main_loss_type: huber
+  huber_delta: 2.0
+  standardize_label: true
+  label_stats_from_data: true
+
+  # Optimizer
+  optimizer:
+    type: adam
+    lr: 1.e-4
+    weight_decay: 0.0
+    beta1: 0.9
+    beta2: 0.999
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 5
+    min_lr: 1.e-6
+
+  # Multi-task sampling: cycle through datasets proportionally
+  multitask_sampling: proportional
+
+  # No physics aux during unified pre-training (no FoldX terms for PPI/DNA)
+  physics_aux_max_weight: 0.0
+  physics_aux_prob: 0.0
+  interface_aux_weight: 0.0

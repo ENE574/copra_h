@@ -1,0 +1,16 @@
+# PRA310 ablate: w/o PIA, GPU5
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA310_ablate_noPIA'
+gpus: [5]
+ckpt: null
+skip_test: true
+run_name: 'pra310_ablate_noPIA_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

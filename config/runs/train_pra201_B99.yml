@@ -1,0 +1,16 @@
+# B99: PRA201 5-fold CV, lower-LR stability + rmse-targeted checkpoint selection
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B99'
+gpus: [2]
+ckpt: null
+skip_test: true
+run_name: 'pra201_B99_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

@@ -1,0 +1,22 @@
+# PEMPNI final train on MPD276 + MPD48 test (GPU 0)
+# Based on finetune_mpd_pempni_final.yml with GPU override
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_final'
+gpus:
+  - 0
+
+ckpt: null
+skip_test: false
+
+run_name: 'mpd_pempni_final_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: train/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: train/all_rmse
+early_stop_mode: min

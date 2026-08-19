@@ -1,0 +1,8 @@
+# Retest best MPD48 checkpoint (Pearson 0.228, ep27 val=0.318).
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_tv_match'
+gpus:
+  - 3
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_tv_match/mpd_pempni_tv_match_2026-06-17-00-15-00/log_fold_0/checkpoint/best-epoch=27-val/all_pearson=0.318.ckpt'
+run_name: 'test_best_'
+wandb: false
+num_folds: 1

@@ -1,0 +1,28 @@
+# ============================================================
+# DDG Fine-tuning on SKEMPI (PPI ΔΔG) — 5-fold CV
+# Stage 2a: Load backbone + DDG from pretrain_ddg_skempi,
+#           freeze backbone, 5-fold cross-validation
+# ============================================================
+epochs: 30
+patience: 30
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_ddg_skempi'
+gpus:
+  - 0
+
+# ⚠ REPLACE with the actual checkpoint path from pretrain_ddg_skempi step 1
+# e.g. outputs/pretrain_ddg_skempi/pretrain_ddg_skempi_YYYY-MM-DD-HH-MM-SS/log_fold_0/checkpoint/best-epoch=*-val/all_pearson=*.ckpt
+ckpt: 'REPLACE_WITH_PRETRAIN_DDG_SKEMPI_CKPT'
+
+run_name: 'finetune_ddg_skempi_'
+wandb: false
+num_folds: 5
+
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+checkpoint_monitor_all: val/pc_pearson
+checkpoint_mode_all: max
+checkpoint_select: primary
+test_both_checkpoints: true
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

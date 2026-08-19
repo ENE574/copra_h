@@ -1,0 +1,29 @@
+dataset_type: 'structure_dataset'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/mCSM_RNA/splits/mCSM_RNA_merged_80pct_B76_s1.csv'
+col_group: 'split'
+batch_size: 4
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/mCSM_RNA/PDBs'
+num_workers: 0
+col_prot_chain: 'Protein chains'
+col_na_chain: 'RNA chains'
+col_prot: 'Protein sequences'
+col_mut: 'Mutation sequences'
+col_na: 'RNA sequences'
+col_label: 'DDG'
+entity_b_type: 'rna'
+mutation_task: 'ddg_prot_na'
+mut: true
+pin_memory: true
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/mmCSM'
+loss_type: 'regression'
+strategy: 'separate'
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_mCSM_RNA'
+offline_mutant_subdir: 'mutant'
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/mCSM_RNA/splits/mCSM_RNA_crossvalidation_foldx_pia_terms.csv'
+transform:
+  - type: 'select_atom'
+    resolution: 'backbone'
+  - type: 'selected_region_with_distmap'
+    patch_size: 256
+  - type: 'subtract_center_of_mass'

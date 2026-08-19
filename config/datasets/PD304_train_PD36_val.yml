@@ -1,0 +1,43 @@
+# PD304: full training set (protein-DNA dG, no mutations)
+dataset_type: 'structure_dataset'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/PD304/splits/PD304_train_PD36_val.csv'
+col_group: 'fold_0'
+batch_size: 2
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/PD304/PDBs'
+num_workers: 0
+col_prot_name: 'PDB'
+col_prot_chain: 'Protein chains'
+col_na_chain: 'DNA chains'
+col_prot: 'Protein sequences'
+col_mut: 'Mutation sequences'
+col_na: 'DNA sequences'
+col_label: '△G(kcal/mol)'
+entity_b_type: dna
+mut: false
+pin_memory: true
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/PD304_train_PD36_val'
+loss_type: regression
+strategy: separate
+
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_PD304'
+offline_mutant_subdir: mutant
+offline_na_sequence_group: dna_sequence
+offline_na_structure_group: dna_structure
+seq_prot_models:
+  - esm2
+seq_dna_models:
+  - dnabert2
+str_prot_models:
+  - esm_if1
+str_dna_models:
+  - rf2na
+
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/PD304/splits/PD304PD36_foldx_pia_terms.csv'
+
+transform:
+  - type: select_atom
+    resolution: backbone
+  - type: selected_region_with_distmap
+    patch_size: 256
+  - type: subtract_center_of_mass

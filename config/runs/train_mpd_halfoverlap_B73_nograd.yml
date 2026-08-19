@@ -1,0 +1,16 @@
+# B73: 50% PDB-level half-overlap, B66 recipe
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_halfoverlap_B73_nograd'
+gpus: [1]
+ckpt: null
+skip_test: true
+run_name: 'mpd_halfoverlap_B73_nograd_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

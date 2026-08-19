@@ -1,0 +1,22 @@
+# Final PEMPNI: full MPD276 train + MPD48 test (sweep v2 best lr5e5_wd1e4_pat15).
+# No val split in MPD_pempni.yml — ckpt/early-stop on train/all_pearson (auto-remapped scheduler).
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_final_v2'
+gpus:
+  - 1
+
+ckpt: null
+skip_test: false
+
+run_name: 'mpd_pempni_final_v2_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: train/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: train/all_rmse
+early_stop_mode: min

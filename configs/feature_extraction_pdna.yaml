@@ -1,0 +1,44 @@
+device: "cuda"
+output_dir: "/media/SSD0/csd/lrg/copra_h/dataset/pdna/features"
+
+dataset:
+  csv_path: "/media/SSD0/csd/lrg/copra_h/dataset/pdna/CSVs/pdna_dataset.csv"
+  pdb_dir: "/media/SSD0/csd/lrg/copra_h/dataset/pdna/PDBs"
+  id_col: "PDB"
+  protein_seq_col: "Protein sequences"
+  dna_seq_col: "DNA sequences"
+  protein_chain_col: "Protein chains"
+  dna_chain_col: "DNA chains"
+
+protein_sequence:
+  fasta: null
+  models:
+    esm2:
+      enabled: true
+      model_dir: "/media/SSD0/csd/lrg/copra_h/weights/ESM2_weights"
+      batch_size: 1
+
+protein_structure:
+  pdb_dir: null
+  fasta: null
+  models:
+    esm_if1:
+      enabled: true
+      model_dir: "/media/SSD0/csd/lrg/copra_h/weights/ESM-IF1_weights"
+      batch_size: 1
+
+dna_sequence:
+  fasta: null
+  models:
+    dnabert2:
+      enabled: true
+      model_path: "/media/SSD0/csd/lrg/copra_h/weights/DNABERT2_weights"
+      batch_size: 1
+
+dna_structure:
+  fasta: null
+  pdb_dir: null
+  models:
+    rf2na:
+      enabled: true
+      model_path: "/media/SSD0/csd/lrg/copra_h/weights/RoseTTAFold2NA_weights"

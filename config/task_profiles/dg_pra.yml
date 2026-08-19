@@ -1,0 +1,11 @@
+# Wild-type protein-RNA binding affinity (PRA310 / PRA201).
+entity_pair:
+  entity_a_type: protein
+  entity_b_type: rna
+  interaction: prot_na
+  mutation_task: none
+
+train:
+  physics_aux_max_weight: 0.01
+  physics_aux_prob: 1.0
+  interface_aux_weight: 0.0

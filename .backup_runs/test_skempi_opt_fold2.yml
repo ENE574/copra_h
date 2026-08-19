@@ -1,0 +1,14 @@
+# SKEMPI opt_fold2 ckpt 五折推理
+epochs: 0
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_opt_fold2_test'
+gpus: [0]
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_opt_fold2/skempi_alltrain_opt_fold2_2026-07-18-16-40-50/log_fold_0/checkpoint/best-epoch=175-train/all_pearson=0.574.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_opt_fold2/skempi_alltrain_opt_fold2_2026-07-18-16-40-50/log_fold_0/checkpoint/best-epoch=175-train/all_pearson=0.574.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_opt_fold2/skempi_alltrain_opt_fold2_2026-07-18-16-40-50/log_fold_0/checkpoint/best-epoch=175-train/all_pearson=0.574.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_opt_fold2/skempi_alltrain_opt_fold2_2026-07-18-16-40-50/log_fold_0/checkpoint/best-epoch=175-train/all_pearson=0.574.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_opt_fold2/skempi_alltrain_opt_fold2_2026-07-18-16-40-50/log_fold_0/checkpoint/best-epoch=175-train/all_pearson=0.574.ckpt'
+skip_test: false
+wandb: false
+num_folds: 5
+run_name: 'skempi_alltrain_opt_fold2_test_'

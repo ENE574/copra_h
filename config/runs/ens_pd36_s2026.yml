@@ -1,0 +1,9 @@
+# Ensemble member seed 2026
+epochs: 1
+patience: 10
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/ens_pd36/s2026'
+gpus: [0]
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_pd36_all_s2026/finetune_pd36_all_s2026_2026-08-19-16-30-30/log_fold_0/checkpoint/last.ckpt'
+run_name: 'test_s2026_'
+wandb: false
+num_folds: 1

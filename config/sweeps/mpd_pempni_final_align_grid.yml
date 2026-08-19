@@ -1,0 +1,138 @@
+# Final protocol alignment ablations (MPD48 test all_pearson).
+#
+# Arms:
+#   A* — tv_match + val/all ckpt (replicates historical 0.228 protocol)
+#   B* — full MPD276 + train/all ckpt at fixed early epochs (align sweep stop ~ep17)
+#   C* — full MPD276 + train/all @ ep30 (failed final v2 reference)
+#
+# Run:
+#   PYTHON_BIN=/home/csd/anaconda3/envs/copra_h/bin/python \
+#     scripts/mpd_pempni_final_align_sweep.py
+#
+# Retest sweep ckpts without retraining:
+#   PYTHON_BIN=... scripts/mpd_pempni_retest_checkpoints.py
+
+selection_metric: test/all_pearson
+tiebreaker_metric: test/all_rmse
+
+base_run_config: config/runs/finetune_mpd_pempni_final_align.yml
+
+trials:
+  # --- Arm A: val-guided (MPD276/35 val + MPD48 test) ---
+  - id: A_tv_hist
+    description: "Historical hparams on tv_match; val/all ckpt (target ~0.228)"
+    model_config: config/models/best_mpd.yml
+    data_config: config/datasets/MPD_pempni_tv_match.yml
+    run:
+      epochs: 30
+      patience: 150
+      checkpoint_monitor: val/all_pearson
+      early_stop_monitor: val/all_pearson
+
+  - id: A_tv_pat15
+    description: "Sweep v2 best hparams; val/all ckpt + patience 15"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni_tv_match.yml
+    run:
+      epochs: 80
+      patience: 15
+      checkpoint_monitor: val/all_pearson
+      early_stop_monitor: val/all_pearson
+
+  - id: A_tv_wd5e5
+    description: "Sweep v2 #3; val/all ckpt + patience 20"
+    model_config: config/models/mpd_pempni_wd5e5.yml
+    data_config: config/datasets/MPD_pempni_tv_match.yml
+    run:
+      epochs: 80
+      patience: 20
+      checkpoint_monitor: val/all_pearson
+      early_stop_monitor: val/all_pearson
+
+  # --- Arm B: full PEMPNI, early train/all ckpt (align sweep early peak) ---
+  - id: B_full_pat15_ep5
+    description: "Full MPD276; stop ep5; train/all ckpt"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run:
+      epochs: 5
+      patience: 150
+      checkpoint_monitor: train/all_pearson
+      early_stop_monitor: train/all_pearson
+
+  - id: B_full_pat15_ep17
+    description: "Full MPD276; stop ep17 (~sweep pat15 stop); train/all ckpt"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run:
+      epochs: 17
+      patience: 150
+      checkpoint_monitor: train/all_pearson
+      early_stop_monitor: train/all_pearson
+
+  - id: B_full_wd5e5_ep5
+    description: "Full MPD276 wd5e5; stop ep5; train/all ckpt"
+    model_config: config/models/mpd_pempni_wd5e5.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run:
+      epochs: 5
+      patience: 150
+      checkpoint_monitor: train/all_pearson
+      early_stop_monitor: train/all_pearson
+
+  - id: B_full_wd5e5_ep17
+    description: "Full MPD276 wd5e5; stop ep17; train/all ckpt"
+    model_config: config/models/mpd_pempni_wd5e5.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run:
+      epochs: 17
+      patience: 150
+      checkpoint_monitor: train/all_pearson
+      early_stop_monitor: train/all_pearson
+
+  # --- Arm C: full PEMPNI reference (already ran as final_v2) ---
+  - id: C_full_pat15_ep30
+    description: "Reference: full MPD276 ep30 train/all (final_v2 got test 0.175)"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run:
+      epochs: 30
+      patience: 150
+      checkpoint_monitor: train/all_pearson
+      early_stop_monitor: train/all_pearson
+
+# Phase-2 zero-train retests (sweep v2 val ckpts -> MPD48 test):
+retest_checkpoints:
+  - id: R_sweep_pat15_valbest
+    description: "Sweep v2 pat15 val/all best ckpt (ep~2); no retrain"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run_dir: /media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_val_sweep_v2/mpd_pempni_val_hp2_lr5e5_wd1e4_pat15_2026-06-18-14-53-40
+    ckpt_glob: "best-*-val/all_pearson=*.ckpt"
+
+  - id: R_sweep_wd5e5_valbest
+    description: "Sweep v2 wd5e5 val/all best ckpt; no retrain"
+    model_config: config/models/mpd_pempni_wd5e5.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run_dir: /media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_val_sweep_v2/mpd_pempni_val_hp2_lr5e5_wd5e5_2026-06-18-12-37-14
+    ckpt_glob: "best-*-val/all_pearson=*.ckpt"
+
+  - id: R_sweep_pat15_last
+    description: "Sweep v2 pat15 last.ckpt (ep17 stop); no retrain"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run_dir: /media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_val_sweep_v2/mpd_pempni_val_hp2_lr5e5_wd1e4_pat15_2026-06-18-14-53-40
+    ckpt_glob: "last.ckpt"
+
+  - id: R_final_v2_trainbest
+    description: "Final v2 train/all best ckpt (ep20); reference"
+    model_config: config/models/mpd_pempni_final_v2.yml
+    data_config: config/datasets/MPD_pempni.yml
+    run_dir: /media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_final_v2/mpd_pempni_final_v2_2026-06-18-17-18-18
+    ckpt_glob: "best-*-train/all_pearson=*.ckpt"
+
+  - id: R_hist_valbest
+    description: "Historical best val ckpt (test 0.228); reference"
+    model_config: config/models/best_mpd.yml
+    data_config: config/datasets/MPD_pempni.yml
+    ckpt_path: /media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_tv_match/mpd_pempni_tv_match_2026-06-17-00-15-00/log_fold_0/checkpoint/best-epoch=27-val/all_pearson=0.318.ckpt

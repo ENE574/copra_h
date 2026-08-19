@@ -1,0 +1,12 @@
+# SKEMPI 3折推理 - A8_nograd
+epochs: 0
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_3cv_A8_nograd_test'
+gpus: [7]
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_nograd_A8/skempi_nograd_A8_2026-08-06-16-17-14/log_fold_0/checkpoint/best-epoch=199-train/all_pearson=0.569.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_nograd_A8/skempi_nograd_A8_2026-08-06-16-17-14/log_fold_0/checkpoint/best-epoch=199-train/all_pearson=0.569.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_nograd_A8/skempi_nograd_A8_2026-08-06-16-17-14/log_fold_0/checkpoint/best-epoch=199-train/all_pearson=0.569.ckpt'
+skip_test: false
+wandb: false
+num_folds: 3
+run_name: 'skempi_3cv_A8_nograd_test_'

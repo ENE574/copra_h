@@ -1,0 +1,25 @@
+# ============================================================
+# DDG Fine-tuning on mCSM (RNA ΔΔG) — 5-fold CV
+# Stage 2b: Load backbone + DDG from pretrain_ddg_skempi,
+#           freeze backbone, 5-fold cross-validation
+#           PPI pre-trained DDG → RNA ddG (cross-interaction transfer)
+# ============================================================
+epochs: 100
+patience: 20
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_ddg_mcsm'
+gpus:
+  - 0
+
+# ⚠ REPLACE with the actual checkpoint path from pretrain_ddg_skempi step 1
+# e.g. outputs/pretrain_ddg_skempi/pretrain_ddg_skempi_YYYY-MM-DD-HH-MM-SS/log_fold_0/checkpoint/best-epoch=*-val/all_pearson=*.ckpt
+ckpt: 'REPLACE_WITH_PRETRAIN_DDG_SKEMPI_CKPT'
+
+run_name: 'finetune_ddg_mcsm_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

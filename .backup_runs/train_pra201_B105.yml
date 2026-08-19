@@ -1,0 +1,16 @@
+# B105: MSE + exp scheduler(gamma=0.995) + lower LR=1.5e-5 + 200 epochs
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B105'
+gpus: [6]
+ckpt: null
+skip_test: true
+run_name: 'pra201_B105_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

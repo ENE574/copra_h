@@ -1,0 +1,17 @@
+# PRA310 Protein-RNA dG (absolute binding affinity)
+# Uses unified_ddg_pretrain checkpoint
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA310_unified'
+gpus:
+  - 3
+ckpt: null
+run_name: 'pra310_unified_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+test_both_checkpoints: false
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

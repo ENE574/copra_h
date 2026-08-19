@@ -1,0 +1,21 @@
+# Final PEMPNI train: full MPD276 once, then test MPD48 once (after val hparam selection).
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_final'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: false
+
+run_name: 'mpd_pempni_final_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: train/all_pearson
+checkpoint_mode: max
+test_both_checkpoints: false
+early_stop_monitor: train/all_pearson
+early_stop_mode: max

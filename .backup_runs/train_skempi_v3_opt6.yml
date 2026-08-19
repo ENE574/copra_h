@@ -1,0 +1,16 @@
+# skempi_v3_opt6 - GPU5
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt6'
+gpus: [5]
+ckpt: null
+skip_test: true
+run_name: 'skempi_v3_opt6_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'train/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'train/all_pearson'
+early_stop_mode: 'max'

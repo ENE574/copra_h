@@ -1,0 +1,16 @@
+# MPD B34 run config: sqrt magnitude weighting, GPU 0 (select via CUDA_VISIBLE_DEVICES)
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pdb_overlap'
+gpus: [0]
+ckpt: null
+skip_test: true
+run_name: 'mpd_pdb_overlap_B34_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

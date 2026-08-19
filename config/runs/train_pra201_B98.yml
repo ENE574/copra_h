@@ -1,0 +1,16 @@
+# B98: PRA201 5-fold CV, Huber+ranking + rmse-targeted checkpoint selection
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B98'
+gpus: [1]
+ckpt: null
+skip_test: true
+run_name: 'pra201_B98_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

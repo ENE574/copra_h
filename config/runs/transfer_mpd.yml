@@ -1,0 +1,18 @@
+# Transfer learning: Unified dG → MPD (prot-DNA ddG)
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/transfer_mpd'
+gpus:
+  - 0
+
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/unified_dg_pretrain/REPLACE_WITH_RUN_ID/log_fold_0/checkpoint/best-epoch=*-val_all_pearson=*.ckpt'
+
+run_name: 'transfer_mpd_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 4
+
+# Use MPD model config (with mutation local GNN + DNA embeddings)
+# This will be loaded after the unified checkpoint to add ddG-specific layers
+checkpoint_select: last

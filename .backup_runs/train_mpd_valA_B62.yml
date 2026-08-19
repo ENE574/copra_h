@@ -1,0 +1,16 @@
+# B62: split A, B50 recipe, seed variant
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_valA_B62'
+gpus: [0]
+ckpt: null
+skip_test: true
+run_name: 'mpd_valA_B62_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_pearson'
+early_stop_mode: 'max'

@@ -1,0 +1,126 @@
+# Hyperparameter grid for val-based selection (MPD_pempni_tv_match).
+# Run: python scripts/mpd_pempni_val_hparam_sweep.py
+
+selection_metric: val/all_pearson
+tiebreaker_metric: val/pc_pearson
+
+base_model_config: config/models/best_mpd.yml
+base_data_config: config/datasets/MPD_pempni_tv_match.yml
+base_run_config: config/runs/finetune_mpd_pempni_val_hparam.yml
+
+trials:
+  - id: baseline
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+      physics_aux_max_weight: 0.01
+    run:
+      patience: 150
+
+  - id: lr5e5
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 0.0
+    run:
+      patience: 150
+
+  - id: wd1e4
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 1.e-4
+    run:
+      patience: 150
+
+  - id: wd1e5
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 1.e-5
+    run:
+      patience: 150
+
+  - id: pat50
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+    run:
+      patience: 50
+
+  - id: phy005
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+      physics_aux_max_weight: 0.005
+    run:
+      patience: 150
+
+  - id: phy0
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+      physics_aux_max_weight: 0.0
+    run:
+      patience: 150
+
+  - id: stdreg
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+      ddg_pred_std_floor: 0.3
+      ddg_pred_std_reg_weight: 0.05
+    run:
+      patience: 150
+
+  - id: constrained
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+    run:
+      patience: 150
+      checkpoint_select: constrained
+      checkpoint_monitor_all: val/pc_pearson
+      checkpoint_select_all_min: 0.0
+
+  - id: seed2025
+    train:
+      seed: 2025
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+    run:
+      patience: 150
+
+  - id: seed2026
+    train:
+      seed: 2026
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+    run:
+      patience: 150
+
+  - id: lr5e5_wd1e4
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+    run:
+      patience: 150

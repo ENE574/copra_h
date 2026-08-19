@@ -1,0 +1,44 @@
+device: cuda
+output_dir: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_MPD_merged
+
+dataset:
+  csv_path: /media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/splits/MPD_merged_copra.csv
+  pdb_dir: /media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/PDBs
+  id_col: PDB
+  protein_seq_col: Protein sequences
+  dna_seq_col: DNA sequences
+  protein_chain_col: Protein chains
+  dna_chain_col: DNA chains
+  mutation_seq_col: Mutation sequences
+
+protein_sequence:
+  fasta:
+  models:
+    esm2:
+      enabled: true
+      model_location: /media/SSD0/csd/lrg/copra_h/weights/esm-2_weights/esm2_t33_650M_UR50D.pt
+      batch_size: 1
+
+protein_structure:
+  pdb_dir:
+  models:
+    esm_if1:
+      enabled: true
+      model_location: /media/SSD0/csd/lrg/copra_h/weights/esm-if1_weights/esm_if1_gvp4_t16_142M_UR50.pt
+      chain_id:
+
+dna_sequence:
+  fasta:
+  models:
+    nucleotide_transformer:
+      enabled: true
+      model_path: /media/SSD0/csd/lrg/copra_h/weights/NucleotideTransformer_weights
+      batch_size: 1
+
+dna_structure:
+  pdb_dir:
+  models:
+    rf2na:
+      enabled: true
+      model_path: /media/SSD0/csd/lrg/copra_h/weights/RoseTTAFold2NA_weights
+      chain_id:

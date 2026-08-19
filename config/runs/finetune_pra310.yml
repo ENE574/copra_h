@@ -1,0 +1,16 @@
+# PRA310 Protein-RNA dG (absolute binding affinity)
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA310'
+gpus:
+  - 0
+ckpt: null
+run_name: 'pra310_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

@@ -1,0 +1,64 @@
+# Feature extraction for SKEMPI ddG (PPI mutations, WT + mutant sequences)
+device: "cuda"
+output_dir: "/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_SKEMPI"
+
+dataset:
+  csv_path: "/media/SSD0/csd/lrg/copra_h/datasets/SKEMPI/splits/skempi.csv"
+  pdb_dir: "/media/SSD0/csd/lrg/copra_h/datasets/SKEMPI/PDBs"
+  id_col: "PDB"
+  mutation_col: "MUTATION"
+  protein_seq_col: "Protein sequences"
+  partner_seq_col: "Protein sequences B"
+  protein_chain_col: "Protein chains"
+  partner_chain_col: "Protein chains B"
+
+protein_sequence:
+  models:
+    esm2:
+      enabled: true
+      model_location: "/media/SSD0/csd/lrg/copra_h/weights/esm-2_weights/esm2_t33_650M_UR50D.pt"
+      repr_layer: 33
+      batch_size: 1
+    prott5:
+      enabled: false
+    saprot:
+      enabled: false
+
+protein_structure:
+  models:
+    esm_if1:
+      enabled: true
+      model_location: "/media/SSD0/csd/lrg/copra_h/weights/esm-if1_weights/esm_if1_gvp4_t16_142M_UR50.pt"
+      chain_id: null
+    proteinmpnn:
+      enabled: false
+    protbert:
+      enabled: false
+    alphafold2:
+      enabled: false
+    protrek:
+      enabled: false
+
+rna_sequence:
+  models:
+    rinalmo:
+      enabled: false
+    rna_fm:
+      enabled: false
+    rna_msm:
+      enabled: false
+
+rna_structure:
+  models:
+    rna_ernie:
+      enabled: false
+    rnabert:
+      enabled: false
+    rhofold:
+      enabled: false
+
+dna_sequence:
+  models: {}
+
+dna_structure:
+  models: {}

@@ -1,0 +1,24 @@
+# SKEMPI strong-reg: tighter early stop + constrained ckpt (val/all>0 then best val/pc).
+epochs: 30
+patience: 30
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_localdiff_cv'
+gpus:
+  - 0
+
+ckpt: null
+
+run_name: 'skempi_localdiff_strongreg_'
+wandb: false
+num_folds: 5
+
+accumulate_grad_batches: 4
+
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+checkpoint_monitor_all: val/pc_pearson
+checkpoint_mode_all: max
+checkpoint_select: constrained
+checkpoint_select_all_min: 0.0
+test_both_checkpoints: true
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

@@ -1,0 +1,86 @@
+# Unified ddG Fine-tuning — multi-task with best parameters
+# Combine SKEMPI + mCSM + MPD to increase data size
+# Use best parameters from previous experiments
+
+resume: null
+task_profile: ddg_unified
+model:
+  model_type: copra
+  use_diff_pred: true
+  esm_type: 650M
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_SKEMPI
+  use_offline_embeddings: true
+  offline_dim: 1280
+  fix_lms: true
+  lora_tune: false
+  pooling: token
+  output_dim: 1
+  pair_dim: 40
+  dist_dim: 40
+  representation_layer: 33
+
+  seq_prot_models: [esm2]
+  str_prot_models: [esm_if1]
+  seq_rna_models: [rna_fm]
+  str_rna_models: [rhofold]
+  seq_dna_models: [dnabert2]
+  str_dna_models: [rf2na]
+
+  coformer:
+    embed_dim: 128
+    pair_dim: 40
+    num_blocks: 2
+    num_heads: 4
+    use_rot_emb: false
+    attn_qkv_bias: true
+    attention_dropout: 0.15
+    transition_dropout: 0.15
+    residual_dropout: 0.15
+    transition_factor: 2
+    use_flash_attn: false
+    attention_type: standard
+
+  mutation_diff_mode: full
+  mutation_local_window: 16
+  mutation_local_pool: center
+  mutation_ddg_use_struct: false
+  mutation_local_gnn: false
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: false
+
+train:
+  temperature: 0.2
+  max_iters: 40_000
+  val_freq: 100
+  seed: 2024
+  max_grad_norm: 5.0
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: mse
+  huber_delta: 2.0
+
+  input_noise_scale: 0.003
+  reverse_aug_prob: 0.2
+
+  physics_aux_max_weight: 0.0
+  physics_aux_prob: 0.0
+
+  complex_demeaned_loss_weight: 0.0
+  complex_demean_min_group_size: 2
+
+  ranking_loss_weight: 0.15
+
+  optimizer:
+    type: adam
+    lr: 3.e-4
+    weight_decay: 3.e-4
+    beta1: 0.9
+    beta2: 0.999
+    freeze_backbone: false
+    pred_head_lr_mult: 5.0
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 10
+    min_lr: 1.e-6

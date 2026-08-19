@@ -1,0 +1,12 @@
+# SKEMPI 3折推理 - opt4
+epochs: 0
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_3cv_v3_opt4_test'
+gpus: [1]
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt4/skempi_v3_opt4_2026-07-20-17-01-47/log_fold_0/checkpoint/best-epoch=189-train/all_pearson=0.503.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt4/skempi_v3_opt4_2026-07-20-17-01-47/log_fold_0/checkpoint/best-epoch=189-train/all_pearson=0.503.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt4/skempi_v3_opt4_2026-07-20-17-01-47/log_fold_0/checkpoint/best-epoch=189-train/all_pearson=0.503.ckpt'
+skip_test: false
+wandb: false
+num_folds: 3
+run_name: 'skempi_3cv_v3_opt4_test_'

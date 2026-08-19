@@ -41,7 +41,12 @@ def _load_foldx_physics():
 _fx = _load_foldx_physics()
 parse_foldx_fxout = _fx.parse_foldx_fxout
 foldx_terms_to_pia_targets = _fx.foldx_terms_to_pia_targets
-PIA_COLS = list(_fx.PIA_PHYSICS_NAMES)
+# FoldX --command=Stability produces exactly the five non-DNA PIA terms. The
+# DNA_* terms (DNA_Electro/DNA_Stacking/DNA_VDW) are computed separately from
+# structure geometry and are not part of the FoldX stability output, so this
+# precompute step only emits the five FoldX terms (matching
+# MPD_merged_foldx_pia_terms.csv).
+PIA_COLS = [n for n in _fx.PIA_PHYSICS_NAMES if not n.startswith("DNA_")]
 
 _DEFAULT_FOLDX = _REPO_ROOT / "foldx" / "foldx_20270131"
 _DEFAULT_MOLECULES = _REPO_ROOT / "foldx" / "molecules"

@@ -1,0 +1,16 @@
+# B101 on PRA201, w/o PIA, GPU1
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_ablate_B101_noPIA'
+gpus: [1]
+ckpt: null
+skip_test: true
+run_name: 'pra201_ablate_B101_noPIA_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

@@ -1,0 +1,16 @@
+# SKEMPI AUROC优化 B5 - GPU4
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_nograd_B5'
+gpus: [4]
+ckpt: null
+skip_test: true
+run_name: 'skempi_nograd_B5_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'train/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'train/all_rmse'
+early_stop_mode: 'min'

@@ -1,0 +1,16 @@
+# B106: Huber(delta=1.5) + plateau + ranking_loss=0.5 + wd=5e-4 + noise=0.02 (all combined)
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B106'
+gpus: [7]
+ckpt: null
+skip_test: true
+run_name: 'pra201_B106_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

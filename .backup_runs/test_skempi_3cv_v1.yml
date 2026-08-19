@@ -1,0 +1,12 @@
+# SKEMPI 3折推理 - v1_alltrain ckpt
+epochs: 0
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_3cv_v1_test'
+gpus: [0]
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain/skempi_alltrain_2026-07-16-17-12-04/log_fold_0/checkpoint/best-epoch=187-train/all_pearson=0.710.ckpt'
+skip_test: false
+wandb: false
+num_folds: 3
+run_name: 'skempi_3cv_v1_test_'

@@ -1,0 +1,38 @@
+# Unified dG pre-training run config
+# Multi-task: cycle through PRA310 (prot-RNA) + PPI_dG (PPI) + DNA_dG (prot-DNA)
+epochs: 50
+patience: 60
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/unified_dg_pretrain'
+gpus:
+  - 0
+
+ckpt: null
+run_name: 'unified_dg_'
+wandb: false
+
+# Single fold for pre-training (use all data, val splits within each dataset)
+num_folds: 1
+
+# Multi-task data sources — cycled by MultiTaskDataModule
+multitask_primary_task: pra310
+multitask_sources:
+  - name: pra310
+    data_config: ./config/datasets/PRA310.yml
+    batch_size: 8
+  - name: ppi_dg
+    data_config: ./config/datasets/PPI_dG.yml
+    batch_size: 8
+  - name: dna_dg
+    data_config: ./config/datasets/DNA_dG.yml
+    batch_size: 4
+
+accumulate_grad_batches: 4
+
+# Monitor all_pearson for early stopping and checkpointing
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+early_stop_monitor: val/all_pearson
+early_stop_mode: max
+
+# Skip full test during pre-training (only validation)
+skip_test: true

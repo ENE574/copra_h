@@ -1,0 +1,16 @@
+# Full PD36 fine-tune (all 36 train, no val). seed 2025. Architecture = pd_dg_finetune_robust.
+epochs: 40
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_pd36_all_s2025'
+gpus: [0]
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/train_pd304/pd304_train_2026-08-19-15-10-41/log_fold_0/checkpoint/best-epoch=25-val/all_pearson=0.367.ckpt'
+skip_test: true
+run_name: 'finetune_pd36_all_s2025_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_pearson'
+early_stop_mode: 'max'

@@ -1,0 +1,21 @@
+# B2: heavy regularization, tight early stopping
+epochs: 25
+patience: 10                              # ← B2: 收紧早停 (val_freq=500 → ~2次/epoch)
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_tv_match'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mpd_pempni_tv_match_B2_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

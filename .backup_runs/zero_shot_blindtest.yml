@@ -1,0 +1,16 @@
+epochs: 50
+patience: 50
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/mCSM'
+gpus:
+  - 4
+
+# Set after mCSM crossvalidation training (num_folds: 1 → one path).
+# Example:
+# ckpt: /media/SSD0/csd/lrg/copra_h/outputs/mCSM_cv/mcsm_cv_2026-01-01-12-00-00/log_fold_0/checkpoint/best-epoch=10-val_loss=1.234.ckpt
+ckpt: null
+ckpts: null
+
+run_name: 'test1_best_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4

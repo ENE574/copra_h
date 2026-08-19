@@ -1,0 +1,16 @@
+# B51: s4 split + B27 minus std_reg + huber_delta=0.5, GPU 1
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_val48_s4_B51'
+gpus: [0]
+ckpt: null
+skip_test: true
+run_name: 'mpd_val48_s4_B51_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

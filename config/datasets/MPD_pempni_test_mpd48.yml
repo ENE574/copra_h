@@ -1,0 +1,45 @@
+# B7 test: MPD48 as test set for evaluation.
+# fold_pempni: train=MPD276, val=MPD48. Remap val→test so trainer.test() loads MPD48.
+dataset_type: 'structure_dataset'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/splits/MPD_merged_copra.csv'
+col_group: 'fold_pempni'
+group_remap: {val: test}
+batch_size: 1
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/PDBs'
+num_workers: 0
+col_prot_name: 'PDB'
+col_prot_chain: 'Protein chains'
+col_na_chain: 'DNA chains'
+col_prot: 'Protein sequences'
+col_mut: 'Mutation sequences'
+col_na: 'DNA sequences'
+col_label: 'DDG'
+entity_b_type: dna
+mut: true
+pin_memory: true
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/MPD_merged'
+loss_type: regression
+strategy: separate
+
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_MPD_merged'
+offline_mutant_subdir: mutant
+offline_na_sequence_group: dna_sequence
+offline_na_structure_group: dna_structure
+seq_prot_models:
+  - esm2
+seq_dna_models:
+  - dnabert2
+str_prot_models:
+  - esm_if1
+str_dna_models:
+  - rf2na
+
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/splits/MPD_merged_foldx_pia_terms.csv'
+
+transform:
+  - type: select_atom
+    resolution: backbone
+  - type: selected_region_with_distmap
+    patch_size: 256
+  - type: subtract_center_of_mass

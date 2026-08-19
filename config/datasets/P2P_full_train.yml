@@ -1,0 +1,27 @@
+# P2P full-training dataset: V2020 + wt + mt (all rows, dG regression).
+# MT rows carry Protein sequences / Mutation sequences and a MUTATION tag, so
+# the dataset is loaded in mutation mode (mut: true). Mutant embeddings live in
+# the same offline root (named {pdb}_{MUTATION}_prot_{chain}.pt) and are found
+# via the framework's mutant-subdir fallback.
+
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/splits/P2P_full_train.csv'
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/PDBs'
+entity_type: ppi
+mut: true
+col_label: 'dG'
+col_prot_name: 'PDB'
+col_prot: 'Protein sequences'
+col_prot_b: 'Protein sequences B'
+col_mut: 'Mutation sequences'
+col_prot_chain: 'Protein chains'
+col_partner_chain: 'Protein chains B'
+dis_threshold: 5.5
+
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_P2P'
+offline_seq_prot_models: ['esm2']
+offline_str_prot_models: ['esm_if1']
+offline_seq_rna_models: []
+offline_str_rna_models: []
+offline_mutant_subdir: null
+partner_use_protein_embeddings: true

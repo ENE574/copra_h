@@ -1,0 +1,18 @@
+# PRA201 Sweep S6 run config (GPU6) — 不标准化标签
+epochs: 120
+patience: 25
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_sweep7'
+gpus:
+  - 6
+ckpt: null
+run_name: 'pra201_sweep_s6_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min
+skip_test: false
+checkpoint_save_top_k: -1

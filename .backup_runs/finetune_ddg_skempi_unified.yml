@@ -1,0 +1,20 @@
+# DDG Fine-tuning on SKEMPI (PPI ΔΔG) — 5-fold CV
+# Uses unified_ddg_pretrain checkpoint
+epochs: 30
+patience: 30
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_ddg_skempi_unified'
+gpus:
+  - 2
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/unified_ddg_pretrain/unified_ddg_2026-06-29-14-02-18/log_fold_0/checkpoint/best-epoch=49-val/all_pearson=0.446.ckpt'
+run_name: 'finetune_ddg_skempi_unified_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+checkpoint_monitor_all: val/pc_pearson
+checkpoint_mode_all: max
+checkpoint_select: primary
+test_both_checkpoints: true
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

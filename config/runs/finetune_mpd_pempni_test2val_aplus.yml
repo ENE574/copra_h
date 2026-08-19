@@ -1,0 +1,21 @@
+# 方案A+: MPD PEMPNI test→val, 中等正则 (fix_lms + lowLR + dropout + 回退物理权重)
+epochs: 20
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_test2val'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mpd_pempni_test2val_aplus_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

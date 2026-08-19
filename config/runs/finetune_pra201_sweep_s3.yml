@@ -1,0 +1,18 @@
+# PRA201 Sweep S3 run config (GPU3) — 低 LR 长训练
+epochs: 200
+patience: 40
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_sweep7'
+gpus:
+  - 3
+ckpt: null
+run_name: 'pra201_sweep_s3_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min
+skip_test: false
+checkpoint_save_top_k: -1

@@ -1,0 +1,21 @@
+# B11: mCSM overlap + complex-demeaned + ranking loss, monitor val/pc_pearson
+epochs: 50                           # more epochs for slower learning
+patience: 20
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/mCSM_rna_overlap'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mcsm_overlap_B11_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: val/pc_pearson  # directly optimize for per-complex correlation
+checkpoint_mode: max
+test_both_checkpoints: false
+early_stop_monitor: val/pc_pearson
+early_stop_mode: max

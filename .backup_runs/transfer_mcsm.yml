@@ -1,0 +1,20 @@
+# Transfer learning: Unified dG → mCSM-RNA (prot-RNA ddG)
+# Loads the unified pre-trained checkpoint and fine-tunes on mCSM-RNA
+epochs: 30
+patience: 150
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/transfer_mcsm'
+gpus:
+  - 0
+
+# Point this to the best unified dG checkpoint after pre-training
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/unified_dg_pretrain/REPLACE_WITH_RUN_ID/log_fold_0/checkpoint/best-epoch=*-val_all_pearson=*.ckpt'
+
+run_name: 'transfer_mcsm_'
+wandb: false
+num_folds: 5
+
+# Override model config for ddG (mutation diff local + GNN)
+model_config_override: ./config/models/best.yml
+inherit_model_from_run: ./config/runs/finetune_mcsm.yml
+
+accumulate_grad_batches: 4

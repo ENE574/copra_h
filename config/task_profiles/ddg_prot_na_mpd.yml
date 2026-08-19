@@ -1,0 +1,23 @@
+# Protein-DNA mutation ΔΔG (MPD) — same mutation trunk as mCSM prot-NA.
+entity_pair:
+  entity_a_type: protein
+  entity_b_type: dna
+  interaction: prot_dna
+  mutation_task: ddg_prot_na
+
+model:
+  mutation_diff_mode: local
+  mutation_local_window: 16
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 1
+  mutation_ddg_wt_context_fuse: false
+
+train:
+  physics_aux_max_weight: 0.01
+  physics_aux_prob: 1.0
+  ddg_pred_std_floor: 0.3
+  ddg_pred_std_reg_weight: 0.02
+  interface_aux_weight: 0.05

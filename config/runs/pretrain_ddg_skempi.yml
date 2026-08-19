@@ -1,0 +1,23 @@
+# ============================================================
+# DDG Layer Pre-training on SKEMPI (PPI ΔΔG)
+# Stage 1: Load backbone from unified_dg_pretrain, train DDG
+#          layers + backbone on SKEMPI (4,076 PPI ddG samples)
+# ============================================================
+epochs: 30
+patience: 20
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/pretrain_ddg_skempi'
+gpus:
+  - 0
+
+# Backbone checkpoint from unified dG pre-training
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/unified_dg_pretrain/unified_dg_2026-06-28-17-00-35/log_fold_0/checkpoint/best-epoch=4-val/all_pearson=0.579.ckpt'
+
+run_name: 'pretrain_ddg_skempi_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

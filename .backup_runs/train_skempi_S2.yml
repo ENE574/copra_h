@@ -1,0 +1,16 @@
+# SKEMPI-S2: ranking_loss=4.0 + plateau + 更高 dropout
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_S2'
+gpus: [2]
+ckpt: null
+skip_test: true
+run_name: 'skempi_S2_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_pearson'
+early_stop_mode: 'max'

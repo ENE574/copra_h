@@ -1,0 +1,14 @@
+# B7: test best checkpoint on MPD48
+epochs: 0
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_test_B7_mpd48'
+gpus:
+  - 3
+
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_alltrain/mpd_pempni_alltrain_B7_2026-07-03-18-51-54/log_fold_0/checkpoint/best-epoch=17-train_loss=0.000.ckpt'
+
+run_name: 'test_B7_mpd48_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8

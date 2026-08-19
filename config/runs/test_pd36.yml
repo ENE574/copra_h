@@ -1,0 +1,11 @@
+# Test PD304-trained model on PD36 (independent protein-DNA dG test set).
+# ckpt is filled in after train_pd304.yml finishes (best checkpoint path).
+epochs: 1
+patience: 10
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_pd36'
+gpus:
+  - 6
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_pd36_all/finetune_pd36_all_2026-08-19-16-08-34/log_fold_0/checkpoint/last.ckpt'
+run_name: 'test_pd36_'
+wandb: false
+num_folds: 1

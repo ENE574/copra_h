@@ -1,0 +1,7 @@
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni'
+gpus:
+  - 0
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni/mpd_pempni_2026-06-16-19-48-47/log_fold_0/checkpoint/best-epoch=16-train/all_pearson=0.782.ckpt'
+run_name: 'test_epoch16_'
+wandb: false
+num_folds: 1

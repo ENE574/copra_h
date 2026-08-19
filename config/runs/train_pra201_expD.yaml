@@ -1,0 +1,15 @@
+num_folds: 5
+epochs: 180
+patience: 45
+gpus: [0]
+ckpt: null
+run_name: 'pra201_expD_'
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_exps/expD'
+wandb: false
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min
+skip_test: false

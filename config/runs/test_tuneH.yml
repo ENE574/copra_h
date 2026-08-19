@@ -1,0 +1,8 @@
+epochs: 1
+patience: 10
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_tuneH'
+gpus: [0]
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_pd36_tuneH/finetune_pd36_tuneH2026-08-19-16-43-34/log_fold_0/checkpoint/last.ckpt'
+run_name: 'test_tuneH_'
+wandb: false
+num_folds: 1

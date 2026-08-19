@@ -1,0 +1,14 @@
+# SKEMPI alltrain_v2 ckpt 在五折 val 上推理
+epochs: 0
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_v2_test'
+gpus: [0]
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_v2/skempi_alltrain_v2_2026-07-17-15-36-56/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.699.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_v2/skempi_alltrain_v2_2026-07-17-15-36-56/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.699.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_v2/skempi_alltrain_v2_2026-07-17-15-36-56/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.699.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_v2/skempi_alltrain_v2_2026-07-17-15-36-56/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.699.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_alltrain_v2/skempi_alltrain_v2_2026-07-17-15-36-56/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.699.ckpt'
+skip_test: false
+wandb: false
+num_folds: 5
+run_name: 'skempi_alltrain_v2_test_'

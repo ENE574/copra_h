@@ -1,0 +1,17 @@
+# PD304 as TRAIN, PD36 as VAL (zero PD36 fine-tune).
+# Evaluates PD304->PD36 transfer: model trained only on PD304, validated/tested on PD36.
+epochs: 40
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/train_pd304_pd36val'
+gpus: [0]
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/train_pd304/pd304_train_2026-08-19-15-10-41/log_fold_0/checkpoint/best-epoch=25-val/all_pearson=0.367.ckpt'
+skip_test: false
+run_name: 'train_pd304_pd36val_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 8
+checkpoint_monitor: 'val/all_pearson'
+checkpoint_mode: 'max'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_pearson'
+early_stop_mode: 'max'

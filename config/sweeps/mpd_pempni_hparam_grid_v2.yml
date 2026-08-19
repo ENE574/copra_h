@@ -1,0 +1,106 @@
+# MPD PEMPNI val sweep v2 — regularization-focused, robust selection on noisy val.
+# Run: python scripts/mpd_pempni_val_hparam_sweep.py --grid config/sweeps/mpd_pempni_hparam_grid_v2.yml
+#
+# Primary metric: mean val/all_pearson over the last N epochs (reduces single-epoch spikes).
+# Tiebreaker: best val/all_pearson with train/all_pearson <= train_all_cap.
+
+selection_metric: val/all_pearson_last5_mean
+tiebreaker_metric: val/all_pearson_train_cap_0.80
+train_all_cap: 0.80
+last_n_epochs: 5
+
+base_model_config: config/models/best_mpd.yml
+base_data_config: config/datasets/MPD_pempni_tv_match.yml
+base_run_config: config/runs/finetune_mpd_pempni_val_hparam_v2.yml
+
+trials:
+  - id: lr5e5_wd1e4
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+
+  - id: lr8e5_wd1e4
+    train:
+      seed: 2024
+      optimizer:
+        lr: 8.e-5
+        weight_decay: 1.e-4
+
+  - id: lr5e5_wd5e5
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 5.e-5
+
+  - id: lr5e5_wd1e5
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-5
+
+  - id: lr1e4_wd1e4
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 1.e-4
+
+  - id: lr5e5_wd1e4_iface
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+      interface_aux_weight: 0.05
+
+  - id: lr5e5_wd1e4_rank
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+      ranking_loss_weight: 0.03
+
+  - id: lr5e5_wd1e4_stdreg
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+      ddg_pred_std_floor: 0.25
+      ddg_pred_std_reg_weight: 0.02
+
+  - id: baseline_ref
+    train:
+      seed: 2024
+      optimizer:
+        lr: 1.e-4
+        weight_decay: 0.0
+      physics_aux_max_weight: 0.01
+
+  - id: lr5e5_wd1e4_pat15
+    train:
+      seed: 2024
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+    run:
+      patience: 15
+
+  - id: lr5e5_wd1e4_seed2025
+    train:
+      seed: 2025
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4
+
+  - id: lr5e5_wd1e4_seed2026
+    train:
+      seed: 2026
+      optimizer:
+        lr: 5.e-5
+        weight_decay: 1.e-4

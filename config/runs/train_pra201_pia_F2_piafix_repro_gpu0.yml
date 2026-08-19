@@ -1,0 +1,17 @@
+# GPU0 reproduction of PRA201_B101_pia_F2_piafix (post metrics-bug-fix)
+# Same hyperparameters as the original baseline; only output_dir differs for clarity.
+epochs: 150
+patience: 60
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix_repro'
+gpus: [0]
+ckpt: null
+skip_test: true
+run_name: 'pra201_pia_F2_piafix_repro_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 8
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

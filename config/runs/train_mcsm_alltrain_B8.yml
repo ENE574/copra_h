@@ -1,0 +1,21 @@
+# B8: mCSM RNA all-train from scratch (mirror B7 strategy)
+epochs: 40
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/mCSM_rna_alltrain'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mcsm_alltrain_B8_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: train/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: train/all_rmse
+early_stop_mode: min

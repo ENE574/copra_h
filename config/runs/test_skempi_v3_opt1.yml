@@ -1,0 +1,14 @@
+# SKEMPI v3 opt1 五折推理
+epochs: 0
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt1_test'
+gpus: [0]
+ckpts:
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt1/skempi_v3_opt1_2026-07-20-17-01-46/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.627.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt1/skempi_v3_opt1_2026-07-20-17-01-46/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.627.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt1/skempi_v3_opt1_2026-07-20-17-01-46/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.627.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt1/skempi_v3_opt1_2026-07-20-17-01-46/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.627.ckpt'
+  - '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_v3_opt1/skempi_v3_opt1_2026-07-20-17-01-46/log_fold_0/checkpoint/best-epoch=195-train/all_pearson=0.627.ckpt'
+skip_test: false
+wandb: false
+num_folds: 5
+run_name: 'skempi_v3_opt1_test_'

@@ -1,0 +1,23 @@
+epochs: 30
+patience: 8
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_localdiff_cv'
+gpus:
+  - 2
+
+ckpt: null
+
+run_name: 'skempi_expA_'
+wandb: false
+num_folds: 5
+fold_indices: [0, 1, 2, 3, 4]
+
+accumulate_grad_batches: 4
+
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+checkpoint_monitor_all: val/pc_pearson
+checkpoint_mode_all: max
+checkpoint_select: constrained
+checkpoint_select_all_min: 0.0
+early_stop_monitor: val/pc_pearson
+early_stop_mode: max

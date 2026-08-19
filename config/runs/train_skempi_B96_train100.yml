@@ -1,0 +1,17 @@
+# B96 recipe on SKEMPI, val 100% ALSO used as train (by PDB).
+# val kept as val (full original val), and ALL val rows also added as train copies.
+epochs: 100
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_B96_train100'
+gpus: [2]
+ckpt: null
+skip_test: true
+run_name: 'skempi_B96_train100_'
+wandb: false
+num_folds: 5
+accumulate_grad_batches: 4
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

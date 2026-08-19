@@ -1,0 +1,50 @@
+# Unified ddG pre-training — multi-entity mutation effect prediction.
+# Supports PPI (SKEMPI), protein-RNA (mCSM), protein-DNA (MPD).
+# Each dataset config provides its own entity_b_type / entity_type override.
+entity_pair:
+  entity_a_type: protein
+  entity_b_type: rna
+  interaction: prot_na
+  mutation_task: ddg_prot_na
+
+model:
+  mutation_diff_mode: local
+  mutation_local_window: 16
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: false
+
+train:
+  # Multi-task sampling: cycle through datasets proportionally
+  multitask_sampling: proportional
+
+  # Loss
+  main_loss_type: huber
+  huber_delta: 2.0
+  standardize_label: true
+  label_stats_from_data: true
+
+  # No physics aux during unified pre-training (per-dataset FoldX terms differ)
+  physics_aux_max_weight: 0.0
+  physics_aux_prob: 0.0
+  interface_aux_weight: 0.0
+
+  # Disable ddG std regularizer during pretraining (focus on raw prediction)
+  ddg_pred_std_floor: 0.0
+  ddg_pred_std_reg_weight: 0.0
+
+  optimizer:
+    type: adam
+    lr: 1.e-4
+    weight_decay: 0.0
+    beta1: 0.9
+    beta2: 0.999
+    freeze_backbone: false
+  scheduler:
+    type: plateau
+    factor: 0.8
+    patience: 8
+    min_lr: 1.e-6

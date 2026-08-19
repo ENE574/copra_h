@@ -1,0 +1,16 @@
+# SKEMPI AUROC优化 A3 - GPU2
+epochs: 200
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/SKEMPI_nograd_A3'
+gpus: [2]
+ckpt: null
+skip_test: true
+run_name: 'skempi_nograd_A3_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: 'train/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'train/all_rmse'
+early_stop_mode: 'min'

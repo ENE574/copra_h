@@ -1,0 +1,16 @@
+# MPD all-train B12 run config
+epochs: 40
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pdb_overlap'
+gpus: [3]
+ckpt: null
+skip_test: true
+run_name: 'mpd_pdb_overlap_B12_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 8
+checkpoint_monitor: 'val/all_rmse'
+checkpoint_mode: 'min'
+test_both_checkpoints: false
+early_stop_monitor: 'val/all_rmse'
+early_stop_mode: 'min'

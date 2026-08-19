@@ -1,0 +1,19 @@
+# Training run config for PRA201 re-training (copra dG, PIA aux, 5-term)
+# Mirrors original PRA201_B101_pia_F2_piafix run; skip_test disabled so test
+# inference is produced automatically after training.
+num_folds: 5
+epochs: 100
+patience: 200
+gpus:
+  - 1
+ckpt: null
+run_name: 'pra201_pia_F2_piafix_retrain_'
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/PRA201_B101_pia_F2_piafix_retrain'
+wandb: false
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min
+skip_test: false

@@ -107,11 +107,15 @@ def foldx_terms_to_pia_targets(terms: Mapping[str, float]) -> Dict[str, float]:
     if all(k in terms for k in PIA_PHYSICS_NAMES):
         return {k: float(terms[k]) for k in PIA_PHYSICS_NAMES}
 
+    # Normalize incoming term keys once (FoldX Stability keys are title-cased
+    # like "Electro"; legacy tables use lower/snake variants).
+    terms_norm = {_norm_header(k): v for k, v in terms.items()}
+
     def get(*names: str) -> float:
         for n in names:
             k = _norm_header(n)
-            if k in terms:
-                return float(terms[k])
+            if k in terms_norm:
+                return float(terms_norm[k])
         return 0.0
 
     elec = get("electro", "electrostatics", "energy_electro")
@@ -231,10 +235,15 @@ def load_physics_targets_csv(path: str | Path) -> Dict[str, Dict[str, Any]]:
             if not sid:
                 continue
             try:
-                if all(c in row and row[c].strip() != "" for c in PIA_PHYSICS_NAMES):
-                    out[sid] = {
-                        k: torch.tensor(float(row[k]), dtype=torch.float32) for k in PIA_PHYSICS_NAMES
-                    }
+                # Primary path: CSV carries a (possibly partial) subset of PIA_PHYSICS_NAMES.
+                # We parse whatever PIA columns are actually present. Missing terms (e.g.
+                # DNA_* on a protein–RNA dataset) are intentionally NOT emitted, so that the
+                # training step skips them (`if name in targets`) instead of feeding zeros —
+                # feeding zeros would force the physics heads to regress 0 and, through the
+                # shared `pooled` representation, poison the main dG prediction.
+                present = {c: row[c] for c in PIA_PHYSICS_NAMES if c in row and row[c].strip() != ""}
+                if present:
+                    out[sid] = {k: torch.tensor(float(v), dtype=torch.float32) for k, v in present.items()}
                 elif all(c in row for c in ("fa_elec", "fa_sol", "fa_atr", "fa_rep")):
                     out[sid] = {
                         "Electro": torch.tensor(float(row["fa_elec"]), dtype=torch.float32),
@@ -262,14 +271,21 @@ def compute_physics_target_stats_from_csv(path: str | Path) -> tuple[dict[str, f
     import torch
 
     rows = load_physics_targets_csv(path)
-    if not rows:
-        return {k: 0.0 for k in PIA_PHYSICS_NAMES}, {k: 1.0 for k in PIA_PHYSICS_NAMES}
     mu: dict[str, float] = {}
     std: dict[str, float] = {}
+    if not rows:
+        return {k: 0.0 for k in PIA_PHYSICS_NAMES}, {k: 1.0 for k in PIA_PHYSICS_NAMES}
     for k in PIA_PHYSICS_NAMES:
-        vals = torch.stack([rows[sid][k] for sid in rows])
-        mu[k] = float(vals.mean().item())
-        std[k] = float(vals.std(unbiased=False).clamp_min(1e-6).item())
+        vals = [rows[sid][k] for sid in rows if k in rows[sid]]
+        if not vals:
+            # Term absent from the CSV (e.g. DNA_* on protein–RNA): leave mu=0/std=1.
+            # The training step skips these (`if name in targets`), so the placeholder is inert.
+            mu[k] = 0.0
+            std[k] = 1.0
+            continue
+        v = torch.stack(vals)
+        mu[k] = float(v.mean().item())
+        std[k] = float(v.std(unbiased=False).clamp_min(1e-6).item())
     return mu, std
 
 

@@ -1,0 +1,21 @@
+# B9: mCSM train/val from scratch, monitor val/all_pearson
+epochs: 40
+patience: 15                              # ← B9: 收紧早停
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/mCSM_rna_tv'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mcsm_tv_B9_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+test_both_checkpoints: false
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

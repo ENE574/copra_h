@@ -1,0 +1,10 @@
+# Ensemble member 3: finetune_pd36 best-epoch=49 (non-robust huber 2.0)
+epochs: 1
+patience: 10
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/ens_pd36/m3'
+gpus:
+  - 0
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_pd36/finetune_pd36_2026-08-19-15-28-34/log_fold_0/checkpoint/best-epoch=49-val/all_pearson=0.212.ckpt'
+run_name: 'test_m3_'
+wandb: false
+num_folds: 1

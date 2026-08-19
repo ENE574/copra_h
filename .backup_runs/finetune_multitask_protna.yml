@@ -1,0 +1,26 @@
+# Multi-task prot-NA ddG: alternate mCSM-RNA + MPD batches (shared CoFormer + mutation head).
+epochs: 30
+patience: 40
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/multitask_protna'
+gpus:
+  - 3
+
+ckpt: null
+run_name: 'multitask_protna_'
+wandb: false
+num_folds: 1
+
+multitask_primary_task: mcsm
+multitask_sources:
+  - name: mcsm
+    data_config: ./config/datasets/mCSM.yml
+    batch_size: 4
+  - name: mpd
+    data_config: ./config/datasets/MPD_pempni_tv_match.yml
+    batch_size: 2
+
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

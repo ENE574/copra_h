@@ -1,0 +1,31 @@
+# Tune-B: push val/all — stronger interface aux + light ranking, slower lr, tighter early stop.
+entity_pair:
+  entity_a_type: protein
+  entity_b_type: protein
+  interaction: ppi
+  mutation_task: ddg_ppi
+
+model:
+  mutation_diff_mode: local
+  mutation_local_window: 16
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: false
+  entity_b_use_protein_fusion: true
+
+train:
+  physics_aux_max_weight: 0.01
+  physics_aux_prob: 1.0
+  ddg_pred_std_floor: 0.28
+  ddg_pred_std_reg_weight: 0.015
+  huber_delta: 2.0
+  interface_aux_weight: 0.10
+  ranking_loss_weight: 0.05
+  optimizer:
+    lr: 7.e-5
+    weight_decay: 1.e-4
+  scheduler:
+    patience: 4

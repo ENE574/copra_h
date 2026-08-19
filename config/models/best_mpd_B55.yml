@@ -1,0 +1,88 @@
+# MPD B55: B50 + huber_delta 1.0->0.5 (tighter L2) + later milestones
+resume: null
+model:
+  model_type: copra
+  embedding_root: /media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_MPD_merged
+  seq_prot_models:
+    - esm2
+  seq_dna_models:
+    - dnabert2
+  str_prot_models:
+    - esm_if1
+  str_dna_models:
+    - rf2na
+  pooling: token
+  mutation_diff_mode: full
+  mutation_local_window: 32
+  mutation_local_pool: center
+  mutation_ddg_use_struct: true
+  mutation_local_gnn: true
+  mutation_local_gnn_k: 8
+  mutation_local_gnn_layers: 2
+  mutation_ddg_wt_context_fuse: true
+  output_dim: 1
+  offline_dim: 1280
+  pair_dim: 40
+  dist_dim: 40
+  coformer:
+    embed_dim: 320
+    pair_dim: 40
+    num_blocks: 6
+    num_heads: 20
+    use_rot_emb: true
+    attn_qkv_bias: false
+    attention_dropout: 0.1
+    transition_dropout: 0.0
+    residual_dropout: 0.1
+    transition_factor: 4
+    use_flash_attn: false
+    attention_type: standard
+  ddg_output_calibrate: true
+
+train:
+  temperature: 0.2
+  max_iters: 30_000
+  val_freq: 1000
+  seed: 2024
+  max_grad_norm: 100.0
+  standardize_label: true
+  label_stats_from_data: true
+  main_loss_type: huber
+  huber_delta: 0.5
+  ddg_pred_std_floor: 0.4
+  ddg_pred_std_reg_weight: 0.0
+  complex_demeaned_loss_weight: 2.0
+  complex_demean_min_group_size: 2
+  ranking_loss_weight: 2.0
+  ranking_loss_margin: 0.5
+  accum_window_loss: true
+  input_noise_scale: 0.02
+  physics_aux_terms:
+    - Electro
+    - Energy_SolvP
+    - Energy_SolvH
+    - Energy_VdW
+    - Energy_Hbond
+  physics_aux_standardize: true
+  physics_aux_clip: 0.0
+  physics_aux_stop_grad: true
+  physics_aux_start_epoch: 10
+  physics_aux_prob: 1.0
+  physics_aux_max_weight: 0.005
+  physics_aux_warmup_epochs: 3
+  physics_aux_decay_epochs: 10
+  physics_aux_min_weight: 0.0
+  physics_aux_normalize: false
+  optimizer:
+    type: adam
+    lr: 3.e-5
+    weight_decay: 1.0e-06
+    beta1: 0.9
+    beta2: 0.999
+  scheduler:
+    type: multistep
+    milestones: [1050, 2100, 3150]
+    gamma: 0.5
+    min_lr: 1.e-7
+    monitor: train_loss
+    mode: min

@@ -1,0 +1,30 @@
+# Unified ddG Fine-tuning — multi-task with pretrained model
+epochs: 50
+patience: 40
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_ddg_multitask'
+gpus:
+  - 0
+
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/unified_ddg_pretrain/unified_ddg_2026-06-29-14-02-18/log_fold_0/checkpoint/best-epoch=49-val/all_pearson=0.446.ckpt'
+run_name: 'finetune_ddg_multitask_'
+wandb: false
+
+num_folds: 1
+
+multitask_primary_task: mcsm
+multitask_sources:
+  - name: skempi
+    data_config: ./config/datasets/SKEMPI.yml
+    batch_size: 2
+  - name: mcsm
+    data_config: ./config/datasets/mCSM.yml
+    batch_size: 4
+  - name: mpd
+    data_config: ./config/datasets/MPD_pempni.yml
+    batch_size: 1
+
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

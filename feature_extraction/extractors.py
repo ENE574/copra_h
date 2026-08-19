@@ -584,6 +584,9 @@ def extract_esm2(
             results = model(tokens, repr_layers=[repr_layer], return_contacts=False)
             token_reps = results["representations"][repr_layer]
             for i, label in enumerate(labels):
+                out_path = output_dir / f"{safe_name(label)}.pt"
+                if out_path.exists():
+                    continue
                 seq_len = len(seqs[i])
                 residue_rep = token_reps[i, 1 : seq_len + 1].detach().cpu()
                 seq_rep = residue_rep.mean(0)
@@ -2014,6 +2017,10 @@ def extract_rf2na(
     sys.path.append(str(repo_root / "RoseTTAFold2NA"))
     
     device_obj = _device_from_string(device)
+    # rf2na runs on CPU: the bundled DGL SE(3)-Transformer does not support the
+    # 'Range' operator on CUDA in this environment. CPU inference is deterministic
+    # and matches the structure-only ('pdb_backbone') use case.
+    rf2na_device = torch.device("cpu")
     output_dir_p = ensure_dir(output_dir)
     pdb_files = _resolve_pdb_files(pdb_dir, pdb_list)
 
@@ -2033,7 +2040,7 @@ def extract_rf2na(
             model_path = str(pt_files[0])
         model = RoseTTAFold2NA.load_from_checkpoint(model_path)
         model.eval()
-        model = model.to(device_obj)
+        model = model.to(rf2na_device)
     except Exception as e:
         print(f"[rf2na] Failed to load model: {e}")
         return
@@ -2050,7 +2057,7 @@ def extract_rf2na(
             
             batch_converter = model.get_batch_converter()
             coords_tensor, confidence, _, _, padding_mask = batch_converter(
-                [(coords, seq, None)], device=device_obj
+                [(coords, seq, None)], device=rf2na_device
             )
             
             encoder_out = model.encoder.forward(
@@ -2071,6 +2078,7 @@ def extract_rf2na(
                 "token_embeddings": rep.detach().cpu(),
                 "sequence_embedding": rep.detach().cpu().mean(0),
                 "chain_id": cid,
+                "source": "pdb_backbone",
             }
             save_tensor_payload(out_path, payload)
         except Exception as e:

@@ -1,0 +1,21 @@
+# B7: nofix_allP config, all data as train, no val/test split.
+epochs: 40
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pempni_alltrain'
+gpus:
+  - 3
+
+ckpt: null
+skip_test: true
+
+run_name: 'mpd_pempni_alltrain_B7_'
+wandb: false
+num_folds: 1
+
+accumulate_grad_batches: 8
+
+checkpoint_monitor: train_loss
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: train_loss
+early_stop_mode: min

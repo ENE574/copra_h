@@ -62,7 +62,7 @@ train:
   physics_aux_stop_grad: true
   physics_aux_start_epoch: 10
   physics_aux_prob: 1.0
-  physics_aux_max_weight: 0.005
+  physics_aux_max_weight: 0.1
   physics_aux_warmup_epochs: 3
   physics_aux_decay_epochs: 10
   physics_aux_min_weight: 0.0

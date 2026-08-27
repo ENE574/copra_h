@@ -860,10 +860,27 @@ class ESM2RiNALMo(nn.Module):
         mt_emb = self.proj_cplx(mt_emb)
         pooled_mut = self._coformer_pool(mt_emb, z, ~mt_masks)
 
+        # ---- 能量分解项进入主预测（可解释加性融合）----
+        # 用突变态(pooled_mut)与野生态(pooled_wt)分别过 physics_heads 得到两态绝对能量项，
+        # Δterm = term(mut) - term(wt) 与 FoldX ddG = ΔE 语义对齐，
+        # ddG ≈ data_driven + Σ wᵢ·Δtermᵢ 构成显式可解释分解。
+        wt_emb = self.proj_cplx(wt_emb)  # project wt_emb to coformer dim before pooling (symmetric to mt_emb)
+        pooled_wt = self._coformer_pool(wt_emb, z, ~wt_masks)
+        phys_mt = {n: self.physics_heads[n](pooled_mut).squeeze(-1) for n in self.physics_names}
+        phys_wt = {n: self.physics_heads[n](pooled_wt).squeeze(-1) for n in self.physics_names}
+        phys_delta = {n: phys_mt[n] - phys_wt[n] for n in self.physics_names}
+        phys_stack = torch.stack([phys_delta[n] for n in self.physics_names], dim=-1)
+        phys_sum = (phys_stack * self.physics_weights).sum(dim=-1)
+        ddg_pred = ddg_pred + self.main_refinement_scale * phys_sum
+        ddg_pred_inv = ddg_pred_inv - self.main_refinement_scale * phys_sum
+
         return {
             "ddg_pred": ddg_pred,
             "ddg_pred_inv": ddg_pred_inv,
             "pooled_mut": pooled_mut,
+            "physics": phys_delta,           # 各项 Δterm（与 FoldX ddG 语义一致）
+            "physics_sum": phys_sum,         # Σ wᵢ·Δtermᵢ 物理分解对 ddG 的贡献
+            "physics_weights": self.physics_weights,  # 各项权重（归因用）
         }
 
     def _forward(self, input, strategy='separate'):
@@ -899,12 +916,25 @@ class ESM2RiNALMo(nn.Module):
             for name in self.physics_names:
                 physics_outputs[name] = self.physics_heads[name](pooled).squeeze(-1)
 
-            # Main prediction from pred_head (this is the only term used for final prediction)
-            main_pred = self._apply_calib(self.pred_head(pooled).squeeze(-1))
+            # Main prediction from pred_head (data-driven term)
+            data_pred = self._apply_calib(self.pred_head(pooled).squeeze(-1))
+
+            # ---- 能量分解项进入主预测（可解释加性融合，dG 单态分支）----
+            # dG 为单态（无 wt/mt 配对），故用绝对能量项 termᵢ 而非 Δtermᵢ。
+            # dG ≈ data_driven + scale · Σ wᵢ·termᵢ 构成显式可解释分解，
+            # 每项贡献 scale·wᵢ·termᵢ 可直接解析归因。
+            phys_stack = torch.stack(
+                [physics_outputs[n] for n in self.physics_names], dim=-1
+            )
+            physics_sum = (phys_stack * self.physics_weights).sum(dim=-1)
+            main_pred = data_pred + self.main_refinement_scale * physics_sum
 
             return {
                 'pred': main_pred,
-                'physics': physics_outputs,
+                'pred_data': data_pred,                 # 纯数据驱动分量（归因用）
+                'physics': physics_outputs,             # 各项绝对能量 termᵢ
+                'physics_sum': physics_sum,             # Σ wᵢ·termᵢ 物理分解对 dG 的贡献
+                'physics_weights': self.physics_weights,
                 'main_refinement': main_pred,
                 'pooled': pooled
             }

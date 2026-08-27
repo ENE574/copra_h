@@ -248,6 +248,8 @@ class StructureDataset(Dataset):
         self.entity_b_type = str(kwargs.get("entity_b_type", "rna"))
         self.mutation_task = str(kwargs.get("mutation_task", "none"))
         self.entity_type = str(entity_type)
+        self.mut = mut
+        self.col_mut = col_mut
         self.entity_pair = resolve_entity_pair_from_args(self)
         if entity_type == "prot_na" and self.entity_pair.interaction == "prot_dna":
             self.entity_type = "prot_na"
@@ -259,8 +261,6 @@ class StructureDataset(Dataset):
         self.type = 'reg'
         self.diskcache = diskcache
         self.prot_alphabet = ESMAlphabet.from_architecture("ESM-1b")
-        self.mut = mut
-        self.col_mut = col_mut
         def _ensure_list(value, fallback):
             if value is None:
                 return list(fallback)
@@ -270,6 +270,11 @@ class StructureDataset(Dataset):
 
         self.use_precomputed_embeddings = use_precomputed_embeddings
         self.embedding_root = embedding_root
+        # NA sequence/structure offline embedding 子目录由 offline_na_sequence_group /
+        # offline_na_structure_group 决定（DNA 复合 -> dna_sequence/dna_structure，
+        # RNA 复合 -> rna_sequence/rna_structure），默认保持 RNA 行为以兼容旧配置。
+        self.offline_na_sequence_group = str(kwargs.get("offline_na_sequence_group", "rna_sequence"))
+        self.offline_na_structure_group = str(kwargs.get("offline_na_structure_group", "rna_structure"))
         self.protein_embedding_model = protein_embedding_model
         self.rna_embedding_model = rna_embedding_model
         self.seq_prot_models = _ensure_list(seq_prot_models, [protein_embedding_model])
@@ -439,6 +444,7 @@ class StructureDataset(Dataset):
                 item['prot_chain_ids'] = prot_chains
                 item['rna_chain_ids'] = na_chains
                 item['entity_pair'] = dict(self._entity_pair_meta)
+                import sys
                 if self.use_precomputed_embeddings:
                     item['use_precomputed_embeddings'] = True
                     item['embedding_root'] = str(self.embedding_root)
@@ -758,11 +764,11 @@ class CustomStructCollate(object):
                     chain_id = rna_chain_ids[j] if j < len(rna_chain_ids) else 'X'
                     name = safe_name(f"{complex_id}_rna_{chain_id or 'X'}")
                     for model_name in seq_rna_models:
-                        emb = _load_embedding("rna_sequence", name, len(na_seq), max_na_length, model_name)
+                        emb = _load_embedding(self.offline_na_sequence_group, name, len(na_seq), max_na_length, model_name)
                         if emb is not None:
                             seq_rna_embeds[model_name].append(emb)
                     for model_name in str_rna_models:
-                        emb = _load_embedding("rna_structure", name, len(na_seq), max_na_length, model_name)
+                        emb = _load_embedding(self.offline_na_structure_group, name, len(na_seq), max_na_length, model_name)
                         if emb is not None:
                             str_rna_embeds[model_name].append(emb)
                 curr_na_idx += 1

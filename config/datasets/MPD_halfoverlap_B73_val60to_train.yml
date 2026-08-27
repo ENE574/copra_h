@@ -1,6 +1,8 @@
+# MPD halfoverlap, 60% of val moved to train (train=318, val=20)
+# 保持 fold_halfoverlap 划分列, 仅将 48 个 val 中的 28 个(60%)改标为 train
 dataset_type: 'structure_dataset'
-df_path: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/splits/MPD_merged_copra.csv'
-col_group: fold_pempni_tv_match
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/splits/MPD_merged_copra_val60to_train.csv'
+col_group: fold_halfoverlap
 batch_size: 2
 data_root: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/PDBs'
 num_workers: 0
@@ -14,7 +16,7 @@ col_label: 'DDG'
 entity_b_type: dna
 mut: true
 pin_memory: true
-cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/MPD_merged'
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/MPD_merged_val60to_train'
 loss_type: regression
 strategy: separate
 
@@ -27,9 +29,13 @@ seq_prot_models:
   - esm2
 seq_dna_models:
   - dnabert2
+seq_rna_models:
+  - dnabert2
 str_prot_models:
   - esm_if1
 str_dna_models:
+  - rf2na
+str_rna_models:
   - rf2na
 
 physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/MPD_merged/splits/MPD_merged_foldx_pia_terms_with_dna.csv'

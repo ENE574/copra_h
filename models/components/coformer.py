@@ -93,15 +93,14 @@ class CoFormer(nn.Module):
             attn_weights = []
 
         for block in self.blocks:
-        #     x, struct_embed, attn = checkpoint.checkpoint(
-        #         block, 
-        #         x,
-        #         struct_embed,
-        #         key_padding_mask,
-        #         need_attn_weights,
-        #         use_reentrant=False
-        #         )
-            x, struct_embed, attn = block(x, struct_embed, key_padding_mask, attn_mask)
+            x, struct_embed, attn = checkpoint.checkpoint(
+                block,
+                x,
+                struct_embed,
+                key_padding_mask,
+                attn_mask,
+                use_reentrant=True,
+            )
             if need_attn_weights:
                 attn_weights.append(attn)
 

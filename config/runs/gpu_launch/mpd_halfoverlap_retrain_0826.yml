@@ -1,0 +1,18 @@
+# Re-train MPD on original half-overlap split (MPD_halfoverlap_B73.yml / fold_halfoverlap).
+# Uses latest ddG model_config best_mpd_B69.yml.
+epochs: 150
+patience: 60
+output_dir: /media/SSD0/csd/lrg/copra_h/outputs/mpd_halfoverlap_retrain_0826
+gpus:
+- 0
+ckpt: null
+skip_test: true
+run_name: mpd_halfoverlap_retrain_0826_
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 8
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+test_both_checkpoints: false
+early_stop_monitor: val/all_rmse
+early_stop_mode: min

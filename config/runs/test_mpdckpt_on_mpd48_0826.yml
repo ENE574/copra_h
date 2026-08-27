@@ -1,0 +1,13 @@
+# Cross-dataset transfer test: MPD-trained ckpt evaluated on MPD48 test set.
+# MPD48 = fold_pempni val split remapped to test (see MPD_pempni_test_mpd48.yml).
+# Uses the FINAL 2026-08-26 MPD training checkpoint (best-epoch=19, val rmse 0.989).
+epochs: 0
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_mpdckpt_on_mpd48_0826'
+gpus:
+- 0
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/MPD_merged_pdb_overlap_gpu5/mpd_pdb_overlap_B42_2026-08-26-15-31-56/log_fold_0/checkpoint/best-epoch=19-val/all_rmse=0.989.ckpt'
+run_name: 'test_mpdckpt_mpd48_0826_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4

@@ -1,0 +1,9 @@
+# Test the 30-complex fine-tuned model on full PD36 (36) test set.
+epochs: 1
+patience: 10
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_pd36_train30'
+gpus: [0]
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_pd36_train30/finetune_pd36_train30_2026-08-21-14-33-17/log_fold_0/checkpoint/last.ckpt'
+run_name: 'test_pd36_train30_'
+wandb: false
+num_folds: 1

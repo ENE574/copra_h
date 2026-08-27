@@ -4,9 +4,11 @@
 # The `suffix` (wt/mt/V2020) column has been dropped; all rows are `train`.
 
 dataset_type: 'structure_dataset'
-df_path: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/splits/P2P_full_dg_train.csv'
+# Filtered to L<=1200 to avoid pair_encoder OOM on long-tail giant complexes
+# (max L 3419 -> 1190; FoldX coverage remains 100%).
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/splits/P2P_full_dg_train_filtered_L1200.csv'
 col_group: 'fold_0'
-batch_size: 2
+batch_size: 1
 data_root: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/PDBs'
 num_workers: 0
 col_prot_name: 'PDB'
@@ -23,14 +25,18 @@ cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/P2P_full_dg'
 loss_type: regression
 strategy: separate
 
+# FoldX PIA physical labels (5 terms) for physics aux / interpretability.
+# All 2701 train PDBs now have ok=1 FoldX labels (regenerated 2026-08-26).
+physics_targets_csv: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/splits/P2P_foldx_pia_terms.csv'
+
 use_offline_embeddings: true
 offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_P2P'
-offline_seq_prot_models: ['esm2']
-offline_str_prot_models: ['esm_if1']
-offline_seq_rna_models: []
-offline_str_rna_models: []
+seq_prot_models: ['esm2']
+str_prot_models: ['esm_if1']
+seq_rna_models: []
+str_rna_models: []
 offline_mutant_subdir: null
-partner_use_protein_embeddings: true
+offline_partner_use_protein_embeddings: true
 
 transform:
   - type: select_atom

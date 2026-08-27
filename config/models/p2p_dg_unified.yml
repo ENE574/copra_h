@@ -52,12 +52,14 @@ train:
   standardize_label: true
   label_stats_from_data: true
 
-  # Disable physics aux for P2P (FoldX terms not available / not needed for dG)
-  physics_aux_max_weight: 0.0
-  physics_aux_prob: 0.0
-  physics_aux_terms: []
-  physics_aux_standardize: false
-  physics_aux_start_epoch: 1000
+  # Physics aux / interpretability for P2P dG (FoldX 5 PIA terms now available).
+  # physics heads are supervised to predict real FoldX energy terms, making the
+  # additive decomposition ddG/dG = data_driven + scale·Σ wᵢ·termᵢ physically meaningful.
+  physics_aux_max_weight: 0.1
+  physics_aux_prob: 1.0
+  physics_aux_terms: []   # empty = use all 5 PIA terms
+  physics_aux_standardize: true   # auto z-score from physics_targets_csv
+  physics_aux_start_epoch: 0
 
   optimizer:
     type: adam

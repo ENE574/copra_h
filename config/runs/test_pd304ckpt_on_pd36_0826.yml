@@ -1,0 +1,12 @@
+# Cross-dataset transfer test: PD304-trained ckpt evaluated on PD36 test set.
+# Uses the FINAL 2026-08-26 PD304 training checkpoint (best-epoch=17, val pearson 0.461).
+epochs: 0
+patience: 200
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_pd304ckpt_on_pd36_0826'
+gpus:
+- 0
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/train_pd304_gpu3/pd304_train_2026-08-26-15-31-56/log_fold_0/checkpoint/best-epoch=17-val/all_pearson=0.461.ckpt'
+run_name: 'test_pd304ckpt_pd36_0826_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 8

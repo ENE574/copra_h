@@ -2,25 +2,37 @@
 # Label column is `dG` (absolute binding free energy).
 # Mutation (MT) rows are excluded here because offline mutant embeddings are
 # not yet prepared; they will be added in a later stage.
+# Fixed: added structure_dataset fields + loss_type (was missing -> crash).
 
+dataset_type: 'structure_dataset'
 df_path: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/splits/P2P_train_all.csv'
+col_group: 'fold_0'
+batch_size: 2
 data_root: '/media/SSD0/csd/lrg/copra_h/datasets/P2P/PDBs'
-entity_type: ppi
-mut: false
-col_label: 'dG'
+num_workers: 0
 col_prot_name: 'PDB'
-col_prot: 'Protein sequences'
-col_na: 'RNA sequences'
 col_prot_chain: 'Protein chains'
 col_partner_chain: 'Protein chains B'
-col_na_chain: 'RNA chains'
-dis_threshold: 5.5
+col_prot: 'Protein sequences'
+col_na: 'RNA sequences'
+col_mut: 'Mutation sequences'
+col_label: 'dG'
+entity_type: ppi
+mut: false
+pin_memory: true
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/P2P_all_train'
+loss_type: regression
+strategy: separate
 
 use_offline_embeddings: true
 offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_P2P'
-offline_seq_prot_models: ['esm2']
-offline_str_prot_models: ['esm_if1']
-offline_seq_rna_models: []
-offline_str_rna_models: []
+seq_prot_models: ['esm2']
+str_prot_models: ['esm_if1']
+seq_rna_models: []
+str_rna_models: []
 offline_mutant_subdir: null
-partner_use_protein_embeddings: true
+offline_partner_use_protein_embeddings: true
+
+transform:
+  - type: select_atom
+    resolution: backbone

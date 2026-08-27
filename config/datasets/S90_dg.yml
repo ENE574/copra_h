@@ -1,0 +1,33 @@
+# S90 dG inference config (derived from P2P dG). Sequences recovered from PDBs.
+dataset_type: 'structure_dataset'
+df_path: '/media/SSD0/csd/lrg/copra_h/datasets/S90/splits/S90_dg.csv'
+col_group: 'fold_0'
+batch_size: 1
+data_root: '/media/SSD0/csd/lrg/copra_h/datasets/S90/PDBs'
+num_workers: 0
+col_prot_name: 'PDB'
+col_prot_chain: 'Protein chains'
+col_partner_chain: 'Protein chains B'
+col_prot: 'Protein sequences'
+col_na: 'RNA sequences'
+col_mut: 'Mutation sequences'
+col_label: 'dG'
+entity_type: ppi
+mut: false
+pin_memory: true
+cache_dir: '/media/SSD0/csd/lrg/copra_h/cache/S90_dg'
+loss_type: regression
+strategy: separate
+
+use_offline_embeddings: true
+offline_embedding_root: '/media/SSD0/csd/lrg/copra_h/outputs/feature_extraction_S90'
+seq_prot_models: ['esm2']
+str_prot_models: ['esm_if1']
+seq_rna_models: []
+str_rna_models: []
+offline_mutant_subdir: null
+offline_partner_use_protein_embeddings: true
+
+transform:
+  - type: select_atom
+    resolution: backbone

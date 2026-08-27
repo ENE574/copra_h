@@ -3,7 +3,7 @@ epochs: 50
 patience: 50
 output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_dg_p2p_all_train'
 gpus:
-  - 2
+  - 0
 
 ckpt: null
 

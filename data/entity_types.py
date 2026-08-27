@@ -89,7 +89,10 @@ def resolve_entity_pair_from_args(args: Any) -> EntityPairSpec:
     na_type = str(_get(args, "entity_b_type", _get(args, "na_entity_type", "rna"))).lower()
     b_type = EntityType.DNA if na_type == "dna" else EntityType.RNA
     interaction = "prot_dna" if b_type == EntityType.DNA else "prot_na"
-    task = mutation_task if mutation_task != "none" else ("ddg_prot_na" if mut else "none")
+    if mutation_task != "none":
+        task = mutation_task
+    else:
+        task = ("ddg_prot_dna" if b_type == EntityType.DNA else "ddg_prot_na") if mut else "none"
     return EntityPairSpec(EntityType.PROTEIN, b_type, interaction, mutation_task=task)
 
 

@@ -1,0 +1,17 @@
+# Inference of P2P dG last.ckpt on S79/S90 benchmarks.
+# ckpt is passed via --ckpt on the command line.
+epochs: 1
+patience: 1
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/infer_s79_s90'
+gpus:
+  - 6
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/finetune_dg_p2p_full/finetune_dg_p2p_full_2026-08-26-16-47-22/log_fold_0/checkpoint/last.ckpt'
+run_name: 'infer_s79_s90_'
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 1
+checkpoint_monitor: val/all_rmse
+checkpoint_mode: min
+early_stop_monitor: val/all_rmse
+early_stop_mode: min
+skip_test: false

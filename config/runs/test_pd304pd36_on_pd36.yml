@@ -1,0 +1,9 @@
+# Test: model trained on PD304+PD36 (340 all train) on PD36 full test set.
+epochs: 1
+patience: 10
+output_dir: '/media/SSD0/csd/lrg/copra_h/outputs/test_pd304pd36_on_pd36'
+gpus: [0]
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/train_pd304pd36/train_pd304pd36_2026-08-19-18-40-05/log_fold_0/checkpoint/last.ckpt'
+run_name: 'test_pd304pd36_'
+wandb: false
+num_folds: 1

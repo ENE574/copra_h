@@ -1,0 +1,19 @@
+# Fine-tune PD304-pretrained DNA model on PD36 (train/val split) on GPU7.
+# Uses the original PD304 pretrain ckpt as the finetune start point (per user: "微调起点仍用原来的").
+# Original split: PD36_finetune.csv / fold_0 (train=24, val=12).
+epochs: 80
+patience: 40
+output_dir: /media/SSD0/csd/lrg/copra_h/outputs/pd36_finetune_0826
+gpus:
+- 0
+ckpt: '/media/SSD0/csd/lrg/copra_h/outputs/pd36_finetune_0826/pd36_finetune_0826_2026-08-26-16-48-03/log_fold_0/checkpoint/last.ckpt'
+skip_test: true
+run_name: pd36_finetune_0826_
+wandb: false
+num_folds: 1
+accumulate_grad_batches: 4
+checkpoint_monitor: val/all_pearson
+checkpoint_mode: max
+test_both_checkpoints: false
+early_stop_monitor: val/all_pearson
+early_stop_mode: max

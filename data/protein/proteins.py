@@ -240,6 +240,8 @@ class ProteinInput:
     @classmethod
     def from_pdbchain(cls, chain, idx):
         result = chain2arrays(chain, idx)
+        if result is None:
+            return None
         return cls(**result)
 
     @classmethod
@@ -277,6 +279,9 @@ class ProteinInput:
                 # print("Reject:", chain)
                 continue
             protein = cls.from_pdbchain(chain, idx)
+            if protein is None:
+                # chain had no valid residues (e.g. all HETATM / non-standard) -> skip
+                continue
             if with_angles:
                 protein = protein.fillna(with_angles=True)
             # print("Protein:", protein)
@@ -484,6 +489,11 @@ def chain2arrays(chain, idx):
     b_factors = np.array(b_factors)
     chain_nb = np.array(chain_nb)
     # print("Atom Mask:", atom_mask.shape, chain_id)
+    # Guard: if the chain has no valid residues, atom_mask is empty and
+    # indexing with[:, 1] would raise "too many indices". Return None so the
+    # caller (from_pdbchain / _filter_chains_in_pdb) can safely skip it.
+    if len(atom_mask) == 0:
+        return None
     mask = atom_mask[:, 1] * np.array([r != 'X' for r in seq])
     resseq = np.array(resseq)
     res_nb = np.array(res_nb)
